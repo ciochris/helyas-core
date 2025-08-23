@@ -1,0 +1,60 @@
+body {
+  font-family: Arial, sans-serif;
+  background-color: #f4f6f8;
+  margin: 0;
+  padding: 0;
+}
+
+.container {
+  max-width: 800px;
+  margin: auto;
+  padding: 20px;
+}
+
+h1 {
+  text-align: center;
+  color: #2b4c7e;
+}
+
+h2 {
+  color: #444;
+}
+
+#task-form {
+  display: flex;
+  justify-content: center;
+  margin-top: 20px;
+}
+
+#task-input {
+  flex: 1;
+  padding: 10px;
+  font-size: 16px;
+}
+
+button {
+  padding: 10px 20px;
+  background-color: #2b4c7e;
+  color: #fff;
+  border: none;
+  cursor: pointer;
+}
+
+#response {
+  margin-top: 20px;
+  white-space: pre-wrap;
+  background: #fff;
+  padding: 15px;
+  border: 1px solid #ddd;
+}
+
+#sessions {
+  margin-top: 10px;
+  padding: 0;
+  list-style-type: none;
+}
+
+#sessions li {
+  padding: 5px 0;
+  border-bottom: 1px solid #eee;
+}
