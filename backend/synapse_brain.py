@@ -1,71 +1,51 @@
 from flask import Flask, request, jsonify
 import sqlite3
 import os
-from backend.utils.logging_utils import setup_logging, log
-from backend.utils.provider_manager import get_providers
+
+from backend.orchestrator import round_table
 
 app = Flask(__name__)
 
-setup_logging()
-
-DB_PATH = "synapse_memory.db"
-
-def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS memory (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            task TEXT,
-            response TEXT
-        )
-    """)
-    conn.commit()
-    conn.close()
-
-init_db()
-
+# Health check
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "app": "Helyas"})
+    return jsonify({"app": "Helyas", "status": "ok"})
 
+# Config check
+@app.route("/config", methods=["GET"])
+def config():
+    return jsonify({"projectName": os.getenv("PROJECT_NAME", "Helyas")})
+
+# Analyze endpoint (collegato a orchestrator)
 @app.route("/analyze", methods=["POST"])
 def analyze():
-    data = request.get_json()
+    data = request.json
     task = data.get("task", "")
-    if not task:
-        return jsonify({"error": "No task provided"}), 400
 
-    response = f"Helyas ha ricevuto il task: {task}"
+    if os.getenv("RT_ENABLED", "0") == "1":
+        result = round_table(task)
+        return jsonify(result)
+    else:
+        return jsonify({"result": f"Analyzed (mock): {task}"})
 
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("INSERT INTO memory (task, response) VALUES (?, ?)", (task, response))
-    conn.commit()
-    conn.close()
-
-    log(f"Task analizzato: {task}")
-    return jsonify({"response": response})
-
+# Sessions (mock, ultime interazioni)
 @app.route("/sessions", methods=["GET"])
 def sessions():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect("helyas.db")
     c = conn.cursor()
-    c.execute("SELECT id, task, response FROM memory ORDER BY id DESC LIMIT 10")
+    c.execute("CREATE TABLE IF NOT EXISTS decisions (id INTEGER PRIMARY KEY, task TEXT, summary TEXT, artifact_id INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+    c.execute("SELECT task, summary, created_at FROM decisions ORDER BY created_at DESC LIMIT 10")
     rows = c.fetchall()
     conn.close()
-    return jsonify([
-        {"id": r[0], "task": r[1], "response": r[2]} for r in rows
-    ])
+    return jsonify([{"task": r[0], "summary": r[1], "created_at": r[2]} for r in rows])
 
+# Approve (mock)
 @app.route("/approve", methods=["POST"])
 def approve():
-    data = request.get_json()
-    task_id = data.get("id")
-    decision = data.get("decision", "pending")
-    log(f"Approvazione task {task_id}: {decision}")
-    return jsonify({"status": "approved", "id": task_id, "decision": decision})
+    data = request.json
+    artifact_id = data.get("artifact_id")
+    decision = data.get("decision", "approved")
+    return jsonify({"artifact_id": artifact_id, "decision": decision, "status": "recorded"})
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=5000)
