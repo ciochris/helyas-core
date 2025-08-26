@@ -1,0 +1,46 @@
+name: Helyas Nightly
+
+on:
+  schedule:
+    - cron: "0 2 * * *"   # Ogni notte alle 2:00 UTC (4:00 ora italiana)
+  workflow_dispatch:       # Permette di lanciarlo anche a mano
+
+jobs:
+  run-helyas:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Test Helyas /health
+        run: |
+          curl -s https://helyas.onrender.com/health > health.log
+          cat health.log
+
+      - name: Test Helyas /analyze
+        run: |
+          echo '{"task":"Esegui analisi automatica nightly"}' > body.json
+          curl -s -X POST -H "Content-Type: application/json" -d @body.json https://helyas.onrender.com/analyze > analyze.log
+          cat analyze.log
+
+      - name: Save results
+        run: |
+          mkdir -p reports
+          timestamp=$(date +'%Y-%m-%d_%H-%M-%S')
+          cp health.log reports/health_$timestamp.txt
+          cp analyze.log reports/analyze_$timestamp.txt
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: helyas-report
+          path: reports/
