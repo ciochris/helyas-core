@@ -1,0 +1,400 @@
+name: Helyas AutoBuilder
+
+on:
+  workflow_dispatch:
+    inputs:
+      force_run:
+        description: 'Force run even if no tasks'
+        required: false
+        default: false
+        type: boolean
+  schedule:
+    - cron: '0 2 * * *'  # Runs at 2 AM UTC daily
+
+permissions: write-all
+
+env:
+  SERVICE_URL: https://helyas.onrender.com
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  helyas-autobuilder:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: Setup Git
+      run: |
+        git config --global user.name "Helyas AutoBuilder"
+        git config --global user.email "autobuilder@helyas.dev"
+    
+    - name: Create required directories
+      run: |
+        mkdir -p reports
+        mkdir -p logs
+        mkdir -p backups
+    
+    - name: Read and validate tasks
+      id: read-tasks
+      run: |
+        TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S UTC')
+        echo "TIMESTAMP=$TIMESTAMP" >> $GITHUB_OUTPUT
+        
+        if [ -f "tasks.md" ]; then
+          echo "TASKS_EXIST=true" >> $GITHUB_OUTPUT
+          echo "Tasks file found. Processing tasks..."
+          
+          # Extract pending tasks (lines starting with - [ ])
+          PENDING_TASKS=$(grep -E "^[\s]*-[\s]*\[[\s]*\]" tasks.md | wc -l)
+          echo "PENDING_TASKS=$PENDING_TASKS" >> $GITHUB_OUTPUT
+          
+          echo "Found $PENDING_TASKS pending tasks:"
+          grep -E "^[\s]*-[\s]*\[[\s]*\]" tasks.md || echo "No tasks in standard format"
+          
+        else
+          echo "TASKS_EXIST=false" >> $GITHUB_OUTPUT
+          echo "No tasks.md found. Creating template..."
+          
+          cat > tasks.md << 'EOF'
+        # Helyas Development Tasks
+        
+        ## Pending Tasks
+        - [ ] Example: Add new endpoint for user authentication
+        - [ ] Example: Implement database connection
+        - [ ] Example: Create error handling middleware
+        
+        ## In Progress
+        - [ ] Task being worked on
+        
+        ## Completed Tasks
+        - [x] Initial project setup
+        - [x] Deploy to Render
+        - [x] Configure GitHub Actions
+        
+        ## Notes
+        - Add your tasks here using GitHub markdown checkbox format
+        - Use - [ ] for pending tasks
+        - Use - [x] for completed tasks
+        - Be as detailed or brief as needed
+        EOF
+          
+          echo "PENDING_TASKS=0" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Install dependencies
+      run: |
+        echo "Installing Python dependencies..."
+        if [ -f "requirements.txt" ]; then
+          pip install -r requirements.txt
+          echo "Dependencies installed from requirements.txt"
+        else
+          echo "No requirements.txt found, installing basic dependencies"
+          pip install flask requests
+        fi
+    
+    - name: Test service connectivity
+      id: connectivity-test
+      run: |
+        echo "Testing Helyas service connectivity..."
+        
+        # Test health endpoint
+        echo "Testing /health endpoint..."
+        if curl -f -s --max-time 30 "$SERVICE_URL/health"; then
+          echo "HEALTH_STATUS=PASS" >> $GITHUB_OUTPUT
+          echo "Health endpoint accessible"
+        else
+          echo "HEALTH_STATUS=FAIL" >> $GITHUB_OUTPUT
+          echo "Health endpoint failed"
+        fi
+        
+        # Test analyze endpoint
+        echo "Testing /analyze endpoint..."
+        ANALYZE_RESPONSE=$(curl -s --max-time 30 -X POST "$SERVICE_URL/analyze" \
+          -H "Content-Type: application/json" \
+          -d '{"task":"AutoBuilder connectivity test"}' || echo "FAILED")
+        
+        if echo "$ANALYZE_RESPONSE" | grep -q "Helyas ha ricevuto"; then
+          echo "ANALYZE_STATUS=PASS" >> $GITHUB_OUTPUT
+          echo "Analyze endpoint working: $ANALYZE_RESPONSE"
+        else
+          echo "ANALYZE_STATUS=FAIL" >> $GITHUB_OUTPUT
+          echo "Analyze endpoint failed: $ANALYZE_RESPONSE"
+        fi
+    
+    - name: Process development tasks
+      if: steps.read-tasks.outputs.TASKS_EXIST == 'true' && steps.read-tasks.outputs.PENDING_TASKS != '0'
+      id: process-tasks
+      run: |
+        echo "Processing development tasks..."
+        TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S UTC')
+        TASK_LOG="logs/task_execution_$(date +%Y%m%d_%H%M).log"
+        
+        echo "=== TASK EXECUTION LOG ===" > "$TASK_LOG"
+        echo "Started: $TIMESTAMP" >> "$TASK_LOG"
+        echo "" >> "$TASK_LOG"
+        
+        # Read pending tasks
+        echo "Pending tasks to process:" >> "$TASK_LOG"
+        grep -E "^[\s]*-[\s]*\[[\s]*\]" tasks.md >> "$TASK_LOG" || echo "No tasks found" >> "$TASK_LOG"
+        echo "" >> "$TASK_LOG"
+        
+        # For now, we simulate task processing
+        # In the future, this will integrate with GPT/Claude APIs
+        echo "=== TASK PROCESSING SIMULATION ===" >> "$TASK_LOG"
+        echo "Note: Full AI integration pending - currently logging tasks for manual review" >> "$TASK_LOG"
+        
+        # Create backup of current state
+        BACKUP_DIR="backups/pre_build_$(date +%Y%m%d_%H%M)"
+        mkdir -p "$BACKUP_DIR"
+        cp -r . "$BACKUP_DIR/" 2>/dev/null || true
+        echo "Backup created: $BACKUP_DIR" >> "$TASK_LOG"
+        
+        echo "TASK_LOG_FILE=$TASK_LOG" >> $GITHUB_OUTPUT
+        echo "TASKS_PROCESSED=true" >> $GITHUB_OUTPUT
+    
+    - name: Run extended testing suite
+      id: extended-tests
+      run: |
+        echo "Running extended testing suite..."
+        TEST_LOG="logs/test_results_$(date +%Y%m%d_%H%M).log"
+        
+        echo "=== EXTENDED TEST RESULTS ===" > "$TEST_LOG"
+        echo "Timestamp: $(date '+%Y-%m-%d %H:%M:%S UTC')" >> "$TEST_LOG"
+        echo "" >> "$TEST_LOG"
+        
+        # Test multiple requests to analyze endpoint
+        echo "Testing /analyze endpoint resilience..." >> "$TEST_LOG"
+        SUCCESS_COUNT=0
+        TOTAL_TESTS=5
+        
+        for i in $(seq 1 $TOTAL_TESTS); do
+          echo "Test $i/$TOTAL_TESTS" >> "$TEST_LOG"
+          
+          RESPONSE=$(curl -s --max-time 10 -X POST "$SERVICE_URL/analyze" \
+            -H "Content-Type: application/json" \
+            -d "{\"task\":\"Load test request $i\"}" 2>&1)
+          
+          if echo "$RESPONSE" | grep -q "Helyas ha ricevuto"; then
+            echo "  ✓ PASS: $RESPONSE" >> "$TEST_LOG"
+            SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+          else
+            echo "  ✗ FAIL: $RESPONSE" >> "$TEST_LOG"
+          fi
+          
+          sleep 2
+        done
+        
+        echo "" >> "$TEST_LOG"
+        echo "SUCCESS RATE: $SUCCESS_COUNT/$TOTAL_TESTS" >> "$TEST_LOG"
+        
+        if [ $SUCCESS_COUNT -ge 3 ]; then
+          echo "EXTENDED_TESTS=PASS" >> $GITHUB_OUTPUT
+          echo "Overall test result: PASS" >> "$TEST_LOG"
+        else
+          echo "EXTENDED_TESTS=FAIL" >> $GITHUB_OUTPUT
+          echo "Overall test result: FAIL" >> "$TEST_LOG"
+        fi
+        
+        echo "TEST_LOG_FILE=$TEST_LOG" >> $GITHUB_OUTPUT
+    
+    - name: Generate comprehensive report
+      run: |
+        REPORT_FILE="reports/nightly_log_$(date +%Y%m%d_%H%M).txt"
+        TIMESTAMP="${{ steps.read-tasks.outputs.TIMESTAMP }}"
+        
+        cat > "$REPORT_FILE" << EOF
+        ========================================
+        HELYAS AUTOBUILDER NIGHTLY REPORT
+        ========================================
+        Generated: $TIMESTAMP
+        Service URL: $SERVICE_URL
+        GitHub Repository: ${{ github.repository }}
+        Workflow Run: ${{ github.run_number }}
+        
+        SYSTEM STATUS SUMMARY:
+        ├── Health Endpoint: ${{ steps.connectivity-test.outputs.HEALTH_STATUS }}
+        ├── Analyze Endpoint: ${{ steps.connectivity-test.outputs.ANALYZE_STATUS }}
+        ├── Extended Tests: ${{ steps.extended-tests.outputs.EXTENDED_TESTS }}
+        └── Tasks Processed: ${{ steps.process-tasks.outputs.TASKS_PROCESSED || 'false' }}
+        
+        TASK MANAGEMENT:
+        ├── Tasks File Exists: ${{ steps.read-tasks.outputs.TASKS_EXIST }}
+        ├── Pending Tasks: ${{ steps.read-tasks.outputs.PENDING_TASKS }}
+        └── Task Processing: ${{ steps.process-tasks.outputs.TASKS_PROCESSED || 'Not applicable' }}
+        
+        EOF
+        
+        # Add detailed task information if tasks exist
+        if [ "${{ steps.read-tasks.outputs.TASKS_EXIST }}" = "true" ]; then
+          cat >> "$REPORT_FILE" << EOF
+        PENDING TASKS DETAILS:
+        EOF
+          grep -E "^[\s]*-[\s]*\[[\s]*\]" tasks.md >> "$REPORT_FILE" || echo "No pending tasks found" >> "$REPORT_FILE"
+          echo "" >> "$REPORT_FILE"
+        fi
+        
+        # Add recommendations based on test results
+        cat >> "$REPORT_FILE" << EOF
+        RECOMMENDATIONS AND ALERTS:
+        EOF
+        
+        if [ "${{ steps.connectivity-test.outputs.HEALTH_STATUS }}" = "FAIL" ]; then
+          echo "🚨 CRITICAL: Health endpoint is not responding - investigate service deployment" >> "$REPORT_FILE"
+        fi
+        
+        if [ "${{ steps.connectivity-test.outputs.ANALYZE_STATUS }}" = "FAIL" ]; then
+          echo "🚨 ERROR: Analyze endpoint not functioning - check application code and logs" >> "$REPORT_FILE"
+        fi
+        
+        if [ "${{ steps.extended-tests.outputs.EXTENDED_TESTS }}" = "FAIL" ]; then
+          echo "⚠️  WARNING: Extended tests failed - service may be unstable under load" >> "$REPORT_FILE"
+        fi
+        
+        if [ "${{ steps.connectivity-test.outputs.HEALTH_STATUS }}" = "PASS" ] && [ "${{ steps.connectivity-test.outputs.ANALYZE_STATUS }}" = "PASS" ]; then
+          echo "✅ All core services operational and responding correctly" >> "$REPORT_FILE"
+        fi
+        
+        if [ "${{ steps.read-tasks.outputs.PENDING_TASKS }}" != "0" ]; then
+          echo "📋 Tasks pending: ${{ steps.read-tasks.outputs.PENDING_TASKS }} tasks require attention" >> "$REPORT_FILE"
+        fi
+        
+        # Add file references
+        cat >> "$REPORT_FILE" << EOF
+        
+        DETAILED LOGS:
+        ├── Task Execution: ${{ steps.process-tasks.outputs.TASK_LOG_FILE || 'No tasks processed' }}
+        ├── Test Results: ${{ steps.extended-tests.outputs.TEST_LOG_FILE }}
+        └── This Report: $REPORT_FILE
+        
+        NEXT STEPS:
+        1. Review any failed tests or critical alerts above
+        2. Check detailed logs for specific error information
+        3. Update tasks.md with new development tasks as needed
+        4. Monitor service performance and stability
+        
+        ========================================
+        End of Report - $(date '+%Y-%m-%d %H:%M:%S UTC')
+        ========================================
+        EOF
+        
+        echo "Report generated: $REPORT_FILE"
+        
+        # Display summary to workflow logs
+        echo "=== NIGHTLY REPORT SUMMARY ==="
+        head -20 "$REPORT_FILE"
+        echo "... (full report saved to $REPORT_FILE) ..."
+    
+    - name: Archive logs and reports
+      uses: actions/upload-artifact@v4
+      with:
+        name: helyas-autobuilder-logs-${{ steps.read-tasks.outputs.TIMESTAMP }}
+        path: |
+          reports/
+          logs/
+        retention-days: 30
+        if-no-files-found: warn
+    
+    - name: Commit and push results
+      run: |
+        echo "Committing AutoBuilder results..."
+        
+        # Add all generated files
+        git add reports/
+        git add logs/
+        git add tasks.md
+        git add backups/ || true
+        
+        # Check if there are changes to commit
+        if git diff --cached --quiet; then
+          echo "No changes to commit"
+        else
+          # Commit with detailed message
+          COMMIT_MSG="AutoBuilder: Nightly run $(date '+%Y-%m-%d %H:%M UTC')
+          
+          Status Summary:
+          - Health: ${{ steps.connectivity-test.outputs.HEALTH_STATUS }}
+          - Analyze: ${{ steps.connectivity-test.outputs.ANALYZE_STATUS }}
+          - Tests: ${{ steps.extended-tests.outputs.EXTENDED_TESTS }}
+          - Tasks: ${{ steps.read-tasks.outputs.PENDING_TASKS }} pending
+          
+          [skip ci]"
+          
+          git commit -m "$COMMIT_MSG"
+          
+          # Push changes
+          echo "Pushing changes to repository..."
+          git push origin main
+          
+          echo "✅ AutoBuilder results committed and pushed successfully"
+        fi
+    
+    - name: Create issue on critical failures
+      if: steps.connectivity-test.outputs.HEALTH_STATUS == 'FAIL' || steps.connectivity-test.outputs.ANALYZE_STATUS == 'FAIL'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const title = `🚨 AutoBuilder Alert: Critical Service Failure - ${new Date().toISOString().split('T')[0]}`;
+          const body = `
+          ## 🚨 Critical Service Alert
+          
+          The Helyas AutoBuilder detected critical failures during the nightly check:
+          
+          ### Service Status:
+          - **Health Endpoint**: ${{ steps.connectivity-test.outputs.HEALTH_STATUS }}
+          - **Analyze Endpoint**: ${{ steps.connectivity-test.outputs.ANALYZE_STATUS }}
+          - **Extended Tests**: ${{ steps.extended-tests.outputs.EXTENDED_TESTS }}
+          
+          ### Immediate Actions Required:
+          1. **Check service deployment** on Render platform
+          2. **Review application logs** for error details  
+          3. **Verify recent code changes** that might have caused issues
+          4. **Test endpoints manually** to confirm status
+          
+          ### Service Information:
+          - **URL**: ${process.env.SERVICE_URL}
+          - **Repository**: ${{ github.repository }}
+          - **Workflow Run**: #${{ github.run_number }}
+          
+          ### Detailed Reports:
+          Check the latest nightly report in the \`reports/\` directory for complete details.
+          
+          ---
+          *This alert was automatically created by the Helyas AutoBuilder*  
+          *Workflow Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}*
+          `;
+          
+          await github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: title,
+            body: body,
+            labels: ['bug', 'critical', 'autobuilder', 'automated']
+          });
+    
+    - name: Workflow completion summary
+      run: |
+        echo "========================================="
+        echo "HELYAS AUTOBUILDER COMPLETION SUMMARY"
+        echo "========================================="
+        echo "Timestamp: $(date '+%Y-%m-%d %H:%M:%S UTC')"
+        echo "Service URL: $SERVICE_URL"
+        echo "Health Status: ${{ steps.connectivity-test.outputs.HEALTH_STATUS }}"
+        echo "Analyze Status: ${{ steps.connectivity-test.outputs.ANALYZE_STATUS }}"
+        echo "Extended Tests: ${{ steps.extended-tests.outputs.EXTENDED_TESTS }}"
+        echo "Tasks Found: ${{ steps.read-tasks.outputs.TASKS_EXIST }}"
+        echo "Pending Tasks: ${{ steps.read-tasks.outputs.PENDING_TASKS }}"
+        echo "Tasks Processed: ${{ steps.process-tasks.outputs.TASKS_PROCESSED || 'false' }}"
+        echo ""
+        echo "Next scheduled run: Tomorrow at 2:00 AM UTC"
+        echo "Manual trigger: Use 'Actions' tab > 'Helyas AutoBuilder' > 'Run workflow'"
+        echo "========================================="
