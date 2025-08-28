@@ -1,0 +1,36 @@
+========================================
+HELYAS AUTOBUILDER NIGHTLY REPORT
+========================================
+Generated: 2025-08-28 20:41:12 UTC
+Service URL: https://helyas.onrender.com
+GitHub Repository: ciochris/helyas-core
+Workflow Run: 2
+
+SYSTEM STATUS SUMMARY:
+├── Health Endpoint: PASS
+├── Analyze Endpoint: PASS
+├── Extended Tests: PASS
+└── Tasks Processed: false
+
+TASK MANAGEMENT:
+├── Tasks File Exists: false
+├── Pending Tasks: 0
+└── Task Processing: Not applicable
+
+RECOMMENDATIONS AND ALERTS:
+✅ All core services operational and responding correctly
+
+DETAILED LOGS:
+├── Task Execution: No tasks processed
+├── Test Results: logs/test_results_20250828_2041.log
+└── This Report: reports/nightly_log_20250828_2041.txt
+
+NEXT STEPS:
+1. Review any failed tests or critical alerts above
+2. Check detailed logs for specific error information
+3. Update tasks.md with new development tasks as needed
+4. Monitor service performance and stability
+
+========================================
+End of Report - 2025-08-28 20:41:32 UTC
+========================================
