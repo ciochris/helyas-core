@@ -1,13 +1,12 @@
 import os
-import openai
-from anthropic import Anthropic
 import random
-import json
 from datetime import datetime
+from openai import OpenAI
+from anthropic import Anthropic
 
-# Configura le chiavi dalle variabili di ambiente
-openai.api_key = os.getenv("OPENAI_API_KEY")
-anthropic_client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+# Configura i client API
+client_openai = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+client_anthropic = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 # --- Funzione principale Round Table ---
 
@@ -54,7 +53,7 @@ def round_table(task: str, user: str = "Utente"):
         "task_clarified": clarified_task,
         "final_decision": final_decision,
         "status": "completed",
-        "artifact_log": artifacts  # utile per debug/audit
+        "artifact_log": artifacts
     }
 
     return result
@@ -65,14 +64,14 @@ def round_table(task: str, user: str = "Utente"):
 def prepare_task(task: str) -> str:
     """Chiarifica la richiesta utente usando GPT"""
     try:
-        response = openai.ChatCompletion.create(
+        response = client_openai.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": "Riformula il seguente task in modo chiaro e preciso."},
                 {"role": "user", "content": task}
             ]
         )
-        return response.choices[0].message["content"].strip()
+        return response.choices[0].message.content[0].text.strip()
     except Exception as e:
         return task  # fallback: restituisce la frase originale
 
@@ -115,14 +114,14 @@ def run_round(input_data, mode: str, round_number: int):
 def call_gpt(prompt: str, mode: str, round_number: int) -> str:
     """Chiamata a OpenAI GPT"""
     try:
-        response = openai.ChatCompletion.create(
+        response = client_openai.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": f"Sei ChatGPT. Modalità: {mode}, Round: {round_number}."},
                 {"role": "user", "content": str(prompt)}
             ]
         )
-        return response.choices[0].message["content"].strip()
+        return response.choices[0].message.content[0].text.strip()
     except Exception as e:
         return f"[Errore GPT] {str(e)}"
 
@@ -130,7 +129,7 @@ def call_gpt(prompt: str, mode: str, round_number: int) -> str:
 def call_claude(prompt: str, mode: str, round_number: int) -> str:
     """Chiamata a Claude"""
     try:
-        response = anthropic_client.messages.create(
+        response = client_anthropic.messages.create(
             model="claude-3-opus-20240229",
             max_tokens=500,
             messages=[
