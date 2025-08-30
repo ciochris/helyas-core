@@ -1,0 +1,17 @@
+=== EXTENDED TEST RESULTS ===
+Timestamp: 2025-08-30 03:36:35 UTC
+
+Testing /analyze endpoint resilience...
+Test 1/5
+  ✓ PASS: {"response":"Helyas ha ricevuto il task: Load test request 1"}
+Test 2/5
+  ✓ PASS: {"response":"Helyas ha ricevuto il task: Load test request 2"}
+Test 3/5
+  ✓ PASS: {"response":"Helyas ha ricevuto il task: Load test request 3"}
+Test 4/5
+  ✓ PASS: {"response":"Helyas ha ricevuto il task: Load test request 4"}
+Test 5/5
+  ✓ PASS: {"response":"Helyas ha ricevuto il task: Load test request 5"}
+
+SUCCESS RATE: 5/5
+Overall test result: PASS
