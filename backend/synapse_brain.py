@@ -16,17 +16,13 @@ def health():
 def config():
     return jsonify({"projectName": os.getenv("PROJECT_NAME", "Helyas")})
 
-# Analyze endpoint (collegato a orchestrator)
+# Analyze endpoint (usa sempre l’orchestrator)
 @app.route("/analyze", methods=["POST"])
 def analyze():
     data = request.json
     task = data.get("task", "")
-
-    if os.getenv("RT_ENABLED", "0") == "1":
-        result = round_table(task)
-        return jsonify(result)
-    else:
-        return jsonify({"result": f"Analyzed (mock): {task}"})
+    result = round_table(task)
+    return jsonify(result)
 
 # Sessions (mock, ultime interazioni)
 @app.route("/sessions", methods=["GET"])
@@ -67,4 +63,3 @@ def serve_static(path):
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
-
