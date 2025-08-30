@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 import sqlite3
 import os
 
@@ -33,7 +33,15 @@ def analyze():
 def sessions():
     conn = sqlite3.connect("helyas.db")
     c = conn.cursor()
-    c.execute("CREATE TABLE IF NOT EXISTS decisions (id INTEGER PRIMARY KEY, task TEXT, summary TEXT, artifact_id INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS decisions (
+            id INTEGER PRIMARY KEY,
+            task TEXT,
+            summary TEXT,
+            artifact_id INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
     c.execute("SELECT task, summary, created_at FROM decisions ORDER BY created_at DESC LIMIT 10")
     rows = c.fetchall()
     conn.close()
@@ -47,5 +55,16 @@ def approve():
     decision = data.get("decision", "approved")
     return jsonify({"artifact_id": artifact_id, "decision": decision, "status": "recorded"})
 
+# Route per servire la dashboard dal frontend
+@app.route('/')
+def serve_index():
+    return send_from_directory(os.path.join(os.path.dirname(__file__), '../frontend'), 'index.html')
+
+# Route per servire i file statici (CSS, JS, immagini)
+@app.route('/<path:path>')
+def serve_static(path):
+    return send_from_directory(os.path.join(os.path.dirname(__file__), '../frontend'), path)
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+
