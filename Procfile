@@ -1,1 +1,1 @@
-web: gunicorn -w 1 -k uvicorn.workers.UvicornWorker backend.synapse_brain:app --timeout 120 --graceful-timeout 30
+web: gunicorn -w 1 backend.synapse_brain:app --timeout 120 --graceful-timeout 30
