@@ -1,13 +1,13 @@
 import os
 import openai
-import anthropic
+from anthropic import Anthropic
 import random
 import json
 from datetime import datetime
 
 # Configura le chiavi dalle variabili di ambiente
 openai.api_key = os.getenv("OPENAI_API_KEY")
-anthropic_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+anthropic_client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 # --- Funzione principale Round Table ---
 
