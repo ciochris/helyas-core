@@ -1,112 +1,101 @@
 import os
-import random
-from datetime import datetime
+import asyncio
+from openai import OpenAI
+import anthropic
 
-# --- Funzione principale Round Table ---
+# Inizializza i client usando le chiavi dalle variabili di ambiente
+client_openai = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+client_claude = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
-def round_table(task: str, user: str = "Utente"):
-    """Esegue un Round Table di 4 round fissi con ChatGPT, Claude e Gemini (mock)."""
-
-    artifacts = []
-
-    clarified_task = prepare_task(task)
-    artifacts.append({
-        "round": 0,
-        "mode": "prepare",
-        "task_original": task,
-        "task_clarified": clarified_task,
-        "timestamp": str(datetime.utcnow())
-    })
-
-    proposals_r1 = run_round(clarified_task, "proposal", 1)
-    artifacts.append({"round": 1, "mode": "proposal", "data": proposals_r1})
-
-    proposals_r2 = run_round(proposals_r1, "critique", 2)
-    artifacts.append({"round": 2, "mode": "critique", "data": proposals_r2})
-
-    proposals_r3 = run_round(proposals_r2, "refine", 3)
-    artifacts.append({"round": 3, "mode": "refine", "data": proposals_r3})
-
-    proposals_r4 = run_round(proposals_r3, "converge", 4)
-    artifacts.append({"round": 4, "mode": "converge", "data": proposals_r4})
-
-    final_decision = random.choice(proposals_r4)
-
-    return {
-        "task_original": task,
-        "task_clarified": clarified_task,
-        "final_decision": final_decision,
-        "status": "completed",
-        "artifact_log": artifacts
-    }
-
-
-# --- Funzioni di supporto ---
-
-def prepare_task(task: str) -> str:
+# Funzione di sicurezza: chiama una funzione con timeout
+async def safe_call(func, *args, **kwargs):
     try:
-        from openai import OpenAI
-        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "Riformula il seguente task in modo chiaro e preciso."},
-                {"role": "user", "content": task}
-            ]
-        )
-        return response.choices[0].message.content[0].text.strip()
+        return await asyncio.wait_for(func(*args, **kwargs), timeout=30)
     except Exception as e:
-        return task
+        return f"[Errore Timeout] {str(e)}"
 
+# Wrapper sincrono per compatibilità col resto del codice
+def run_safe(func, *args, **kwargs):
+    return asyncio.run(safe_call(func, *args, **kwargs))
 
-def run_round(input_data, mode: str, round_number: int):
-    results = []
-    results.append({"agent": "ChatGPT", "round": round_number, "mode": mode, "proposal": call_gpt(input_data, mode, round_number)})
-    results.append({"agent": "Claude", "round": round_number, "mode": mode, "proposal": call_claude(input_data, mode, round_number)})
-    results.append({"agent": "Gemini", "round": round_number, "mode": mode, "proposal": f"[Placeholder Gemini] Risposta simulata round {round_number}, mode={mode}"})
-    return results
-
-
-def call_gpt(prompt: str, mode: str, round_number: int) -> str:
+# Funzione per interagire con GPT
+def ask_gpt(prompt):
     try:
-        from openai import OpenAI
-        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        response = client.chat.completions.create(
+        response = run_safe(
+            client_openai.chat.completions.create,
             model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": f"Sei ChatGPT. Modalità: {mode}, Round: {round_number}."},
-                {"role": "user", "content": str(prompt)}
-            ]
+            messages=[{"role": "user", "content": prompt}]
         )
-        return response.choices[0].message.content[0].text.strip()
+        if isinstance(response, str):  # Se è errore o timeout
+            return response
+        return response.choices[0].message.content
     except Exception as e:
         return f"[Errore GPT] {str(e)}"
 
-
-def call_claude(prompt: str, mode: str, round_number: int) -> str:
+# Funzione per interagire con Claude
+def ask_claude(prompt):
     try:
-        from anthropic import Anthropic
-        client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-        response = client.messages.create(
-            model="claude-3-opus-20240229",
+        response = run_safe(
+            client_claude.messages.create,
+            model="claude-3-haiku-20240307",
             max_tokens=500,
-            messages=[{"role": "user", "content": f"Modalità: {mode}, Round: {round_number}. Input: {prompt}"}]
+            messages=[{"role": "user", "content": prompt}]
         )
-        return response.content[0].text.strip()
+        if isinstance(response, str):  # Se è errore o timeout
+            return response
+        return response.content[0].text
     except Exception as e:
         return f"[Errore Claude] {str(e)}"
 
+# Funzione mock per Gemini (verrà integrata più avanti)
+def ask_gemini(prompt):
+    return f"[Placeholder Gemini] Risposta simulata per: {prompt}"
 
-# --- Routing messaggi ---
+# Round Table: gestisce i round tra le AI
+def round_table(task):
+    log = []
 
-def route_message(user: str, text: str) -> str:
-    text = text.strip()
-    low = text.lower()
-    if low.startswith(("gpt:", "chatgpt:")):
-        return f"[MESSAGGIO DI UTENTE ({user}) A CHATGPT]\n{text.split(':',1)[1].strip()}"
-    elif low.startswith("claude:"):
-        return f"[MESSAGGIO DI UTENTE ({user}) A CLAUDE]\n{text.split(':',1)[1].strip()}"
-    elif low.startswith("gemini:"):
-        return f"[MESSAGGIO DI UTENTE ({user}) A GEMINI]\n{text.split(':',1)[1].strip()}"
-    else:
-        return f"[MESSAGGIO DI UTENTE ({user}) A ORCHESTRATOR]\n{text}"
+    # Round 0 - Preparazione
+    log.append({"round": 0, "mode": "prepare", "task_clarified": task})
+
+    # Round 1 - Proposte
+    r1 = [
+        {"agent": "ChatGPT", "mode": "proposal", "proposal": ask_gpt(task)},
+        {"agent": "Claude", "mode": "proposal", "proposal": ask_claude(task)},
+        {"agent": "Gemini", "mode": "proposal", "proposal": ask_gemini(task)}
+    ]
+    log.append({"round": 1, "mode": "proposal", "data": r1})
+
+    # Round 2 - Critiche
+    r2 = [
+        {"agent": "ChatGPT", "mode": "critique", "proposal": ask_gpt(str(r1))},
+        {"agent": "Claude", "mode": "critique", "proposal": ask_claude(str(r1))},
+        {"agent": "Gemini", "mode": "critique", "proposal": ask_gemini(str(r1))}
+    ]
+    log.append({"round": 2, "mode": "critique", "data": r2})
+
+    # Round 3 - Refinement
+    r3 = [
+        {"agent": "ChatGPT", "mode": "refine", "proposal": ask_gpt(str(r2))},
+        {"agent": "Claude", "mode": "refine", "proposal": ask_claude(str(r2))},
+        {"agent": "Gemini", "mode": "refine", "proposal": ask_gemini(str(r2))}
+    ]
+    log.append({"round": 3, "mode": "refine", "data": r3})
+
+    # Round 4 - Convergenza
+    r4 = [
+        {"agent": "ChatGPT", "mode": "converge", "proposal": ask_gpt(str(r3))},
+        {"agent": "Claude", "mode": "converge", "proposal": ask_claude(str(r3))},
+        {"agent": "Gemini", "mode": "converge", "proposal": ask_gemini(str(r3))}
+    ]
+    log.append({"round": 4, "mode": "converge", "data": r4})
+
+    # Decisione finale (puoi farla più complessa)
+    final_decision = r4[0]
+
+    return {
+        "task_original": task,
+        "artifact_log": log,
+        "final_decision": final_decision,
+        "status": "completed"
+    }
