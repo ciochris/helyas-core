@@ -1,1 +1,1 @@
-web: gunicorn backend.synapse_brain:app --workers=1 --threads=2 --timeout=90 --preload
+web: gunicorn -w 1 -k uvicorn.workers.UvicornWorker backend.synapse_brain:app
