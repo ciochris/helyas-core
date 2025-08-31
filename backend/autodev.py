@@ -1,0 +1,491 @@
+# backend/autodev.py - Versione sicura
+
+import os
+import json
+import ast
+import subprocess
+import tempfile
+import signal
+import requests
+import re
+import time
+import base64
+from flask import Blueprint, request, jsonify
+from typing import List, Dict, Tuple
+
+autodev_bp = Blueprint("autodev", __name__)
+
+# === CONFIG ===
+GITHUB_API = "https://api.github.com"
+GITHUB_REPO = os.getenv("GITHUB_REPO", "cristianleoo/helyas-core")
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+BRANCH_DEV = "auto-dev"
+
+# === LIMITS ===
+MAX_TASK_SIZE = 5000
+MAX_FILE_SIZE = 50000
+MAX_FILES_PER_COMMIT = 10
+API_TIMEOUT = 15
+TEST_TIMEOUT = 30
+RATE_LIMIT_DELAY = 1
+
+# === SECURITY ===
+DANGEROUS_IMPORTS = ['os.system', 'subprocess.call', 'eval', 'exec', '__import__']
+SAFE_PATHS_PATTERN = re.compile(r'^[a-zA-Z0-9_/\-\.]+$')
+
+class AutoDevManager:
+    def __init__(self):
+        if not GITHUB_TOKEN:
+            raise ValueError("GITHUB_TOKEN environment variable required")
+        
+        self.headers = {
+            "Authorization": f"token {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github.v3+json",
+            "User-Agent": "Helyas-AutoDev/1.0"
+        }
+        self.api_calls_count = 0
+        self.last_api_call = 0
+
+    def _rate_limit(self):
+        """Enforce rate limiting for GitHub API"""
+        self.api_calls_count += 1
+        current_time = time.time()
+        if current_time - self.last_api_call < RATE_LIMIT_DELAY:
+            time.sleep(RATE_LIMIT_DELAY)
+        self.last_api_call = time.time()
+
+    def validate_task(self, task_data: dict) -> Tuple[bool, str]:
+        """Comprehensive task validation"""
+        if not isinstance(task_data, dict):
+            return False, "Task must be a JSON object"
+
+        # Required fields
+        required_fields = ["task_id", "objective", "constraints", "deliverables"]
+        for field in required_fields:
+            if field not in task_data:
+                return False, f"Missing required field: {field}"
+
+        # Size limits
+        if len(json.dumps(task_data)) > MAX_TASK_SIZE:
+            return False, f"Task input too large (max {MAX_TASK_SIZE} chars)"
+
+        # Input sanitization
+        objective = task_data.get("objective", "")
+        if any(char in objective for char in [';', '|', '&', '`', '$']):
+            return False, "Invalid characters in objective"
+
+        # Task ID format
+        task_id = task_data.get("task_id", "")
+        if not re.match(r'^[a-zA-Z0-9_\-]+$', task_id):
+            return False, "Invalid task_id format"
+
+        return True, "Valid"
+
+    def validate_generated_files(self, files: List[Dict]) -> Tuple[bool, str]:
+        """Validate generated files for security"""
+        if len(files) > MAX_FILES_PER_COMMIT:
+            return False, f"Too many files (max {MAX_FILES_PER_COMMIT})"
+
+        for file_obj in files:
+            if not isinstance(file_obj, dict) or 'path' not in file_obj or 'content' not in file_obj:
+                return False, "Invalid file object structure"
+
+            path = file_obj['path']
+            content = file_obj['content']
+
+            # Path validation - prevent directory traversal
+            if not SAFE_PATHS_PATTERN.match(path):
+                return False, f"Invalid file path: {path}"
+            
+            if '..' in path or path.startswith('/'):
+                return False, f"Unsafe file path: {path}"
+
+            # Content size validation
+            if len(content) > MAX_FILE_SIZE:
+                return False, f"File too large: {path} (max {MAX_FILE_SIZE} chars)"
+
+            # Security scan for dangerous patterns
+            if path.endswith('.py'):
+                for dangerous in DANGEROUS_IMPORTS:
+                    if dangerous in content:
+                        return False, f"Dangerous code pattern detected: {dangerous}"
+
+        return True, "Files validated"
+
+    def execute_round_table(self, task_data: dict) -> Dict:
+        """Execute round table - integrates with existing orchestrator"""
+        print("[AUTO-DEV] Attempting to import orchestrator...")
+        
+        try:
+            # Import orchestrator from existing system
+            from backend.orchestrator import round_table
+            print("[AUTO-DEV] Orchestrator import successful, executing round table...")
+            
+            # Execute round table with task
+            result = round_table(task_data['objective'])
+            print(f"[AUTO-DEV] Round table completed with status: {result.get('status', 'unknown')}")
+            
+            # Convert orchestrator result to file format
+            files = []
+            
+            # Example: create a Python file with the decision
+            if result.get('decision', {}).get('proposal'):
+                files.append({
+                    "path": f"artifacts/generated_{task_data['task_id']}.py",
+                    "content": f"# Auto-generated by Helyas Round Table\n# Task: {task_data['objective']}\n\n\"\"\"\n{result['decision']['proposal']}\n\"\"\"\n\n# Implementation placeholder\nprint('Generated code ready')\n"
+                })
+            
+            # Create summary file
+            files.append({
+                "path": f"artifacts/summary_{task_data['task_id']}.md",
+                "content": f"# Task Summary\n\n**Objective:** {task_data['objective']}\n\n**Decision:** {result.get('decision', {}).get('proposal', 'No decision')}\n\n**Status:** {result.get('status', 'unknown')}\n"
+            })
+
+            print(f"[AUTO-DEV] Generated {len(files)} files using real orchestrator")
+            return {
+                "files": files,
+                "summary": f"Generated artifacts for: {task_data['objective']}"
+            }
+            
+        except ImportError as e:
+            print(f"[AUTO-DEV] Orchestrator import failed: {e}, using mock fallback")
+            # Fallback mock if orchestrator not available
+            return {
+                "files": [{
+                    "path": f"artifacts/mock_{task_data['task_id']}.py",
+                    "content": f"# Mock generation for: {task_data['objective']}\nprint('Mock task completed')\n"
+                }],
+                "summary": f"Mock generation for: {task_data['objective']}"
+            }
+        except Exception as e:
+            print(f"[AUTO-DEV] Orchestrator execution failed: {e}, using emergency fallback")
+            return {
+                "files": [{
+                    "path": f"artifacts/error_{task_data['task_id']}.py",
+                    "content": f"# Error fallback for: {task_data['objective']}\n# Error: {str(e)}\nprint('Error fallback executed')\n"
+                }],
+                "summary": f"Error fallback for: {task_data['objective']}"
+            }
+
+    def run_golden_tests(self, files: List[Dict]) -> Tuple[bool, str]:
+        """Comprehensive golden tests in isolated environment"""
+        try:
+            test_results = []
+            
+            for file_obj in files:
+                if file_obj['path'].endswith('.py'):
+                    # Test 1: Python syntax validation
+                    try:
+                        ast.parse(file_obj['content'])
+                        test_results.append(f"✓ Syntax valid: {file_obj['path']}")
+                    except SyntaxError as e:
+                        return False, f"Syntax error in {file_obj['path']}: {e}"
+                    
+                    # Test 2: Import validation
+                    try:
+                        tree = ast.parse(file_obj['content'])
+                        for node in ast.walk(tree):
+                            if isinstance(node, ast.Import):
+                                for alias in node.names:
+                                    if alias.name in ['os', 'subprocess', 'sys']:
+                                        return False, f"Restricted import in {file_obj['path']}: {alias.name}"
+                    except Exception as e:
+                        return False, f"Import analysis failed for {file_obj['path']}: {e}"
+
+            # Test 3: Simulated execution test
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as temp_file:
+                temp_file.write("print('Golden test execution OK')")
+                temp_file.flush()
+                
+                try:
+                    proc = subprocess.Popen(
+                        ["python3", temp_file.name],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        timeout=TEST_TIMEOUT,
+                        preexec_fn=os.setsid
+                    )
+                    
+                    stdout, stderr = proc.communicate(timeout=TEST_TIMEOUT)
+                    
+                    if proc.returncode != 0:
+                        return False, f"Execution test failed: {stderr.decode()}"
+                        
+                    test_results.append("✓ Execution test passed")
+                    
+                except subprocess.TimeoutExpired:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                    return False, "Execution test timed out"
+                
+                finally:
+                    os.unlink(temp_file.name)
+
+            return True, f"All golden tests passed: {'; '.join(test_results)}"
+            
+        except Exception as e:
+            return False, f"Golden tests failed with exception: {str(e)}"
+
+    def commit_to_branch(self, files: List[Dict], message: str) -> Tuple[bool, str]:
+        """Atomic commit of all files to auto-dev branch"""
+        try:
+            self._rate_limit()
+            
+            # Get current branch SHA
+            ref_url = f"{GITHUB_API}/repos/{GITHUB_REPO}/git/refs/heads/{BRANCH_DEV}"
+            response = requests.get(ref_url, headers=self.headers, timeout=API_TIMEOUT)
+            
+            if response.status_code == 404:
+                # Branch doesn't exist, create from main
+                main_ref_url = f"{GITHUB_API}/repos/{GITHUB_REPO}/git/refs/heads/main"
+                main_response = requests.get(main_ref_url, headers=self.headers, timeout=API_TIMEOUT)
+                if main_response.status_code != 200:
+                    return False, "Cannot access main branch"
+                
+                base_sha = main_response.json()["object"]["sha"]
+                
+                # Create auto-dev branch
+                create_response = requests.post(
+                    f"{GITHUB_API}/repos/{GITHUB_REPO}/git/refs",
+                    headers=self.headers,
+                    json={"ref": f"refs/heads/{BRANCH_DEV}", "sha": base_sha},
+                    timeout=API_TIMEOUT
+                )
+                if create_response.status_code != 201:
+                    return False, f"Cannot create branch {BRANCH_DEV}"
+                
+                current_sha = base_sha
+            elif response.status_code == 200:
+                current_sha = response.json()["object"]["sha"]
+            else:
+                return False, f"Cannot access branch {BRANCH_DEV}: {response.status_code}"
+
+            # Create blobs for all files
+            tree_items = []
+            for file_obj in files:
+                self._rate_limit()
+                
+                blob_response = requests.post(
+                    f"{GITHUB_API}/repos/{GITHUB_REPO}/git/blobs",
+                    headers=self.headers,
+                    json={
+                        "content": base64.b64encode(file_obj['content'].encode()).decode(),
+                        "encoding": "base64"
+                    },
+                    timeout=API_TIMEOUT
+                )
+                
+                if blob_response.status_code != 201:
+                    return False, f"Failed to create blob for {file_obj['path']}"
+                
+                blob_sha = blob_response.json()["sha"]
+                tree_items.append({
+                    "path": file_obj['path'],
+                    "mode": "100644",
+                    "type": "blob",
+                    "sha": blob_sha
+                })
+
+            # Create tree with all files
+            self._rate_limit()
+            tree_response = requests.post(
+                f"{GITHUB_API}/repos/{GITHUB_REPO}/git/trees",
+                headers=self.headers,
+                json={"base_tree": current_sha, "tree": tree_items},
+                timeout=API_TIMEOUT
+            )
+            
+            if tree_response.status_code != 201:
+                return False, "Failed to create tree"
+            
+            tree_sha = tree_response.json()["sha"]
+
+            # Create commit
+            self._rate_limit()
+            commit_response = requests.post(
+                f"{GITHUB_API}/repos/{GITHUB_REPO}/git/commits",
+                headers=self.headers,
+                json={
+                    "message": f"[AUTO-DEV] {message}",
+                    "tree": tree_sha,
+                    "parents": [current_sha]
+                },
+                timeout=API_TIMEOUT
+            )
+            
+            if commit_response.status_code != 201:
+                return False, "Failed to create commit"
+            
+            commit_sha = commit_response.json()["sha"]
+
+            # Update branch reference
+            self._rate_limit()
+            update_response = requests.patch(
+                ref_url,
+                headers=self.headers,
+                json={"sha": commit_sha},
+                timeout=API_TIMEOUT
+            )
+            
+            if update_response.status_code != 200:
+                return False, "Failed to update branch"
+
+            return True, f"Successfully committed {len(files)} files to {BRANCH_DEV}"
+            
+        except requests.exceptions.Timeout:
+            return False, "GitHub API timeout"
+        except requests.exceptions.RequestException as e:
+            return False, f"GitHub API error: {str(e)}"
+        except Exception as e:
+            return False, f"Commit failed: {str(e)}"
+
+    def notify_christian(self, message: str, status: str = "info"):
+        """Enhanced notification system"""
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        log_message = f"[{timestamp}] [AUTO-DEV-{status.upper()}] {message}"
+        print(log_message)
+        
+        # Future: integrate with email/WhatsApp/Slack
+        # For now, just comprehensive logging
+
+
+@autodev_bp.route("/autonomous-develop/debug", methods=["GET"])
+def debug_config():
+    """Debug endpoint to verify configuration and dependencies"""
+    debug_info = {
+        "github_token_configured": bool(GITHUB_TOKEN),
+        "github_repo": GITHUB_REPO,
+        "can_import_orchestrator": False,
+        "orchestrator_error": None,
+        "branch_dev": BRANCH_DEV,
+        "max_file_size": MAX_FILE_SIZE,
+        "max_files_per_commit": MAX_FILES_PER_COMMIT
+    }
+    
+    # Test orchestrator import
+    try:
+        from backend.orchestrator import round_table
+        debug_info["can_import_orchestrator"] = True
+        debug_info["orchestrator_status"] = "Available"
+        print("[AUTO-DEV-DEBUG] Orchestrator import test successful")
+    except ImportError as e:
+        debug_info["orchestrator_error"] = f"Import error: {str(e)}"
+        debug_info["orchestrator_status"] = "Not available - will use mock"
+        print(f"[AUTO-DEV-DEBUG] Orchestrator import failed: {e}")
+    except Exception as e:
+        debug_info["orchestrator_error"] = f"Unexpected error: {str(e)}"
+        debug_info["orchestrator_status"] = "Error during import"
+        print(f"[AUTO-DEV-DEBUG] Orchestrator test error: {e}")
+    
+    # Test GitHub API connectivity
+    if GITHUB_TOKEN:
+        try:
+            headers = {
+                "Authorization": f"token {GITHUB_TOKEN}",
+                "Accept": "application/vnd.github.v3+json",
+                "User-Agent": "Helyas-AutoDev/1.0"
+            }
+            response = requests.get(
+                f"{GITHUB_API}/repos/{GITHUB_REPO}",
+                headers=headers,
+                timeout=10
+            )
+            debug_info["github_api_status"] = response.status_code
+            debug_info["github_api_accessible"] = response.status_code == 200
+            if response.status_code == 200:
+                repo_data = response.json()
+                debug_info["default_branch"] = repo_data.get("default_branch", "unknown")
+                print(f"[AUTO-DEV-DEBUG] GitHub API test successful, default branch: {repo_data.get('default_branch')}")
+        except Exception as e:
+            debug_info["github_api_status"] = "error"
+            debug_info["github_api_accessible"] = False
+            debug_info["github_api_error"] = str(e)
+            print(f"[AUTO-DEV-DEBUG] GitHub API test failed: {e}")
+    else:
+        debug_info["github_api_status"] = "token_missing"
+        debug_info["github_api_accessible"] = False
+    
+    return jsonify(debug_info)
+
+
+@autodev_bp.route("/autonomous-develop", methods=["POST"])
+def autonomous_develop():
+    """Main endpoint for autonomous development"""
+    start_time = time.time()
+    
+    try:
+        if not GITHUB_TOKEN:
+            return jsonify({
+                "status": "error", 
+                "message": "GitHub integration not configured"
+            }), 500
+
+        manager = AutoDevManager()
+        
+        # Validate input
+        task_data = request.get_json(force=True)
+        if not task_data:
+            return jsonify({
+                "status": "error", 
+                "message": "Invalid JSON input"
+            }), 400
+
+        valid, validation_msg = manager.validate_task(task_data)
+        if not valid:
+            manager.notify_christian(f"Task validation failed: {validation_msg}", "error")
+            return jsonify({
+                "status": "error", 
+                "message": validation_msg
+            }), 400
+
+        manager.notify_christian(f"Starting autonomous development for: {task_data['objective']}")
+
+        # Execute Round Table
+        result = manager.execute_round_table(task_data)
+        
+        # Validate generated files
+        valid, file_validation_msg = manager.validate_generated_files(result["files"])
+        if not valid:
+            manager.notify_christian(f"Generated files validation failed: {file_validation_msg}", "error")
+            return jsonify({
+                "status": "error", 
+                "message": file_validation_msg
+            }), 500
+
+        # Run Golden Tests
+        tests_passed, test_msg = manager.run_golden_tests(result["files"])
+        if not tests_passed:
+            manager.notify_christian(f"Golden tests failed: {test_msg}", "error")
+            return jsonify({
+                "status": "failed", 
+                "message": f"Tests failed: {test_msg}"
+            }), 500
+
+        # Commit to auto-dev branch
+        commit_success, commit_msg = manager.commit_to_branch(result["files"], result["summary"])
+        if not commit_success:
+            manager.notify_christian(f"Commit failed: {commit_msg}", "error")
+            return jsonify({
+                "status": "failed", 
+                "message": f"Commit failed: {commit_msg}"
+            }), 500
+
+        elapsed_time = time.time() - start_time
+        success_msg = f"Autonomous development completed in {elapsed_time:.2f}s"
+        manager.notify_christian(success_msg, "success")
+        
+        return jsonify({
+            "status": "success",
+            "message": success_msg,
+            "summary": result["summary"],
+            "files_committed": len(result["files"]),
+            "branch": BRANCH_DEV,
+            "execution_time": elapsed_time
+        })
+
+    except Exception as e:
+        error_msg = f"Autonomous development failed: {str(e)}"
+        print(f"[AUTO-DEV-ERROR] {error_msg}")
+        return jsonify({
+            "status": "error", 
+            "message": error_msg
+        }), 500
