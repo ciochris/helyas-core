@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify
-from orchestrator import round_table
+from backend.orchestrator import round_table
 
 app = Flask(__name__)
 
