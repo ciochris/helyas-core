@@ -1,4 +1,6 @@
 import os
+import re
+import time
 import google.generativeai as genai
 from openai import OpenAI
 import anthropic
@@ -49,20 +51,76 @@ class ClaudeClient:
 
 class GeminiClient:
     def __init__(self):
-        api_key = os.getenv("GOOGLE_API_KEY")
+        api_key = os.getenv("GOOGLE_API_KEY", "").strip()
+        
         if not api_key:
+            print("[GEMINI] API key missing")
             self.enabled = False
             return
-        genai.configure(api_key=api_key)
-        self.model_name = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
-        self.model = genai.GenerativeModel(self.model_name)
-        self.enabled = True
+        
+        # Validazione formato API key
+        if not re.match(r'^[A-Za-z0-9_\-]+$', api_key):
+            print(f"[GEMINI] Invalid API key format: contains illegal characters")
+            self.enabled = False
+            return
+        
+        if len(api_key) < 20:
+            print(f"[GEMINI] API key too short: {len(api_key)} chars")
+            self.enabled = False
+            return
+        
+        try:
+            genai.configure(api_key=api_key)
+            self.model_name = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+            self.model = genai.GenerativeModel(self.model_name)
+            self.enabled = True
+            print(f"[GEMINI] Configured successfully with key: {api_key[:8]}...{api_key[-4:]}")
+        except Exception as e:
+            print(f"[GEMINI] Configuration failed: {e}")
+            self.enabled = False
 
     def ask(self, prompt):
         if not self.enabled:
             return "[Gemini disabled]"
+        
         try:
-            resp = self.model.generate_content(prompt)
-            return resp.text if hasattr(resp, "text") else str(resp)
+            print(f"[GEMINI] Sending request...")
+            start_time = time.time()
+            
+            resp = self.model.generate_content(
+                prompt,
+                generation_config=genai.types.GenerationConfig(
+                    max_output_tokens=512,
+                    temperature=0.3,
+                ),
+                safety_settings=[
+                    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+                    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+                    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+                    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+                ]
+            )
+            
+            elapsed = time.time() - start_time
+            print(f"[GEMINI] Response received in {elapsed:.2f}s")
+            
+            if hasattr(resp, "text") and resp.text:
+                return resp.text.strip()
+            else:
+                return f"[Gemini] Risposta vuota o bloccata dai filtri di sicurezza"
+                
         except Exception as e:
-            return f"[Errore Gemini] {e}"
+            print(f"[GEMINI] API call failed: {e}")
+            
+            # Categorizza l'errore per debugging
+            error_str = str(e).lower()
+            if "quota" in error_str or "limit" in error_str:
+                return "[Gemini] Quota API esaurita"
+            elif "permission" in error_str or "forbidden" in error_str:
+                return "[Gemini] Permessi insufficienti"
+            elif "timeout" in error_str:
+                return "[Gemini] Timeout connessione"
+            elif "illegal header" in error_str:
+                return "[Gemini] API key contiene caratteri non validi"
+            else:
+                return f"[Errore Gemini] {str(e)[:100]}"
