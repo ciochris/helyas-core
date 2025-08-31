@@ -1,8 +1,12 @@
 import os
 from flask import Flask, request, jsonify
 from backend.orchestrator import round_table
+from backend.autodev import autodev_bp
 
 app = Flask(__name__)
+
+# Registra il blueprint autodev
+app.register_blueprint(autodev_bp)
 
 @app.route("/health", methods=["GET"])
 def health():
