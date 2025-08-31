@@ -202,20 +202,23 @@ class AutoDevManager:
                         ["python3", temp_file.name],
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
-                        timeout=TEST_TIMEOUT,
                         preexec_fn=os.setsid
                     )
                     
-                    stdout, stderr = proc.communicate(timeout=TEST_TIMEOUT)
+                    try:
+                        stdout, stderr = proc.communicate(timeout=TEST_TIMEOUT)
+                    except subprocess.TimeoutExpired:
+                        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                        proc.wait()
+                        return False, "Execution test timed out"
                     
                     if proc.returncode != 0:
                         return False, f"Execution test failed: {stderr.decode()}"
                         
                     test_results.append("✓ Execution test passed")
                     
-                except subprocess.TimeoutExpired:
-                    os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-                    return False, "Execution test timed out"
+                except Exception as e:
+                    return False, f"Execution test error: {str(e)}"
                 
                 finally:
                     os.unlink(temp_file.name)
