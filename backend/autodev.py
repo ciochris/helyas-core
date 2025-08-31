@@ -17,7 +17,7 @@ autodev_bp = Blueprint("autodev", __name__)
 
 # === CONFIG ===
 GITHUB_API = "https://api.github.com"
-GITHUB_REPO = os.getenv("GITHUB_REPO", "cristianleoo/helyas-core")  # controlla che sia corretto
+GITHUB_REPO = os.getenv("GITHUB_REPO", "ciochris/helyas-core")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 BRANCH_DEV = "auto-dev"
 
