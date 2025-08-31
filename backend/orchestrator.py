@@ -1,101 +1,50 @@
-import os
-import asyncio
-from openai import OpenAI
-import anthropic
+import time
+from .provider_clients import GPTClient, ClaudeClient, GeminiClient
 
-# Inizializza i client usando le chiavi dalle variabili di ambiente
-client_openai = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-client_claude = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+GPT = GPTClient()
+CLAUDE = ClaudeClient()
+GEMINI = GeminiClient()
 
-# Funzione di sicurezza: chiama una funzione con timeout
-async def safe_call(func, *args, **kwargs):
+def _safe_ask(fn, prompt, timeout_s=25):
+    start = time.time()
     try:
-        return await asyncio.wait_for(func(*args, **kwargs), timeout=30)
+        return fn(prompt)
     except Exception as e:
-        return f"[Errore Timeout] {str(e)}"
+        return f"[errore provider] {e}"
+    finally:
+        if time.time() - start > timeout_s:
+            return "[timeout]"
 
-# Wrapper sincrono per compatibilità col resto del codice
-def run_safe(func, *args, **kwargs):
-    return asyncio.run(safe_call(func, *args, **kwargs))
+def round_table(task_text: str):
+    # Round 1 – proposte indipendenti
+    p_gpt = _safe_ask(lambda p: GPT.ask(p), f"[ROUND1][ROLE=Builder] {task_text}")
+    p_claude = _safe_ask(lambda p: CLAUDE.ask(p), f"[ROUND1][ROLE=Critic] {task_text}")
+    p_gemini = _safe_ask(lambda p: GEMINI.ask(p), f"[ROUND1][ROLE=Analyst] {task_text}")
 
-# Funzione per interagire con GPT
-def ask_gpt(prompt):
-    try:
-        response = run_safe(
-            client_openai.chat.completions.create,
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}]
-        )
-        if isinstance(response, str):  # Se è errore o timeout
-            return response
-        return response.choices[0].message.content
-    except Exception as e:
-        return f"[Errore GPT] {str(e)}"
+    # Round 2 – critica incrociata
+    critic_prompt = lambda other: f"[ROUND2][CRITIQUE] Analizza e segnala debolezze/migliorie:\n{other[:4000]}"
+    c_gpt = _safe_ask(lambda p: GPT.ask(p), critic_prompt((p_claude or '') + '\n' + (p_gemini or '')))
+    c_claude = _safe_ask(lambda p: CLAUDE.ask(p), critic_prompt((p_gpt or '') + '\n' + (p_gemini or '')))
+    c_gemini = _safe_ask(lambda p: GEMINI.ask(p), critic_prompt((p_gpt or '') + '\n' + (p_claude or '')))
 
-# Funzione per interagire con Claude
-def ask_claude(prompt):
-    try:
-        response = run_safe(
-            client_claude.messages.create,
-            model="claude-3-haiku-20240307",
-            max_tokens=500,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        if isinstance(response, str):  # Se è errore o timeout
-            return response
-        return response.content[0].text
-    except Exception as e:
-        return f"[Errore Claude] {str(e)}"
+    # Round 3 – raffinamento
+    refine_prompt = lambda base, crit: f"[ROUND3][REFINE]\nBASE:\n{base}\nCRITIQUE:\n{crit}\nMigliora e restituisci versione finale."
+    r_gpt = _safe_ask(lambda p: GPT.ask(p), refine_prompt(p_gpt, c_claude or c_gemini or ''))
+    r_claude = _safe_ask(lambda p: CLAUDE.ask(p), refine_prompt(p_claude, c_gpt or c_gemini or ''))
+    r_gemini = _safe_ask(lambda p: GEMINI.ask(p), refine_prompt(p_gemini, c_gpt or c_claude or ''))
 
-# Funzione mock per Gemini (verrà integrata più avanti)
-def ask_gemini(prompt):
-    return f"[Placeholder Gemini] Risposta simulata per: {prompt}"
-
-# Round Table: gestisce i round tra le AI
-def round_table(task):
-    log = []
-
-    # Round 0 - Preparazione
-    log.append({"round": 0, "mode": "prepare", "task_clarified": task})
-
-    # Round 1 - Proposte
-    r1 = [
-        {"agent": "ChatGPT", "mode": "proposal", "proposal": ask_gpt(task)},
-        {"agent": "Claude", "mode": "proposal", "proposal": ask_claude(task)},
-        {"agent": "Gemini", "mode": "proposal", "proposal": ask_gemini(task)}
-    ]
-    log.append({"round": 1, "mode": "proposal", "data": r1})
-
-    # Round 2 - Critiche
-    r2 = [
-        {"agent": "ChatGPT", "mode": "critique", "proposal": ask_gpt(str(r1))},
-        {"agent": "Claude", "mode": "critique", "proposal": ask_claude(str(r1))},
-        {"agent": "Gemini", "mode": "critique", "proposal": ask_gemini(str(r1))}
-    ]
-    log.append({"round": 2, "mode": "critique", "data": r2})
-
-    # Round 3 - Refinement
-    r3 = [
-        {"agent": "ChatGPT", "mode": "refine", "proposal": ask_gpt(str(r2))},
-        {"agent": "Claude", "mode": "refine", "proposal": ask_claude(str(r2))},
-        {"agent": "Gemini", "mode": "refine", "proposal": ask_gemini(str(r2))}
-    ]
-    log.append({"round": 3, "mode": "refine", "data": r3})
-
-    # Round 4 - Convergenza
-    r4 = [
-        {"agent": "ChatGPT", "mode": "converge", "proposal": ask_gpt(str(r3))},
-        {"agent": "Claude", "mode": "converge", "proposal": ask_claude(str(r3))},
-        {"agent": "Gemini", "mode": "converge", "proposal": ask_gemini(str(r3))}
-    ]
-    log.append({"round": 4, "mode": "converge", "data": r4})
-
-    # Decisione finale (puoi farla più complessa)
-    final_decision = r4[0]
+    # Round 4 – sintesi finale
+    synth_input = f"GPT:\n{r_gpt}\n\nCLAUDE:\n{r_claude}\n\nGEMINI:\n{r_gemini}\n"
+    if GPT.enabled:
+        decision = _safe_ask(lambda p: GPT.ask(p), f"[ROUND4][SYNTHESIZE] Unifica in una sola risposta chiara e operativa:\n{synth_input}")
+    else:
+        decision = _safe_ask(lambda p: CLAUDE.ask(p), f"[ROUND4][SYNTHESIZE] Unifica in una sola risposta chiara e operativa:\n{synth_input}")
 
     return {
-        "task_original": task,
-        "artifact_log": log,
-        "final_decision": final_decision,
-        "status": "completed"
+        "task": task_text,
+        "proposals": {"gpt": p_gpt, "claude": p_claude, "gemini": p_gemini},
+        "critiques": {"gpt": c_gpt, "claude": c_claude, "gemini": c_gemini},
+        "refined": {"gpt": r_gpt, "claude": r_claude, "gemini": r_gemini},
+        "decision": {"proposal": decision},
+        "status": "ok"
     }
