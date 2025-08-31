@@ -3,16 +3,11 @@ import google.generativeai as genai
 from openai import OpenAI
 import anthropic
 
-def _bool(name, default="false"):
-    return os.getenv(name, default).strip().lower() in ("1","true","yes","on")
-
 class GPTClient:
     def __init__(self):
-        self.enabled = _bool("ENABLE_GPT", "true")
         api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            self.enabled = False
-        self.client = OpenAI(api_key=api_key)
+        self.enabled = True if api_key else False
+        self.client = OpenAI(api_key=api_key) if api_key else None
 
     def ask(self, prompt, model=None):
         if not self.enabled:
@@ -31,11 +26,9 @@ class GPTClient:
 
 class ClaudeClient:
     def __init__(self):
-        self.enabled = _bool("ENABLE_CLAUDE", "true")
         api_key = os.getenv("ANTHROPIC_API_KEY")
-        if not api_key:
-            self.enabled = False
-        self.client = anthropic.Anthropic(api_key=api_key)
+        self.enabled = True if api_key else False
+        self.client = anthropic.Anthropic(api_key=api_key) if api_key else None
 
     def ask(self, prompt, model=None):
         if not self.enabled:
@@ -56,7 +49,6 @@ class ClaudeClient:
 
 class GeminiClient:
     def __init__(self):
-        self.enabled = _bool("ENABLE_GEMINI", "false")
         api_key = os.getenv("GOOGLE_API_KEY")
         if not api_key:
             self.enabled = False
@@ -64,6 +56,7 @@ class GeminiClient:
         genai.configure(api_key=api_key)
         self.model_name = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
         self.model = genai.GenerativeModel(self.model_name)
+        self.enabled = True
 
     def ask(self, prompt):
         if not self.enabled:
