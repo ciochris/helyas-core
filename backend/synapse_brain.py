@@ -40,10 +40,18 @@ def backlog_add():
             return jsonify({"status": "error", "message": "No task provided"}), 400
 
         backlog = load_backlog()
-        backlog.append({"task": task, "status": "pending"})
-        save_backlog(backlog)
 
-        return jsonify({"status": "success", "message": f"Task added: {task}"})
+        # Esegui subito il task
+        try:
+            result = round_table(task)
+            backlog.append({"task": task, "status": "done", "result": result})
+            save_backlog(backlog)
+            return jsonify({"status": "success", "message": f"Task executed: {task}", "result": result})
+        except Exception as e:
+            backlog.append({"task": task, "status": "error", "error": str(e)})
+            save_backlog(backlog)
+            return jsonify({"status": "error", "message": str(e)}), 500
+
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
@@ -55,7 +63,7 @@ def backlog_list():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# 🔹 NUOVO ENDPOINT: esegue i task pending
+# Scheduler rimane disponibile ma non indispensabile
 @app.route("/scheduler/run", methods=["POST"])
 def scheduler_run():
     try:
