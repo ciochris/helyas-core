@@ -44,11 +44,13 @@ def backlog_add():
         # Esegui subito il task
         try:
             result = round_table(task)
-            backlog.append({"task": task, "status": "done", "result": result})
+            entry = {"task": task, "status": "done", "result": result}
+            backlog.append(entry)
             save_backlog(backlog)
             return jsonify({"status": "success", "message": f"Task executed: {task}", "result": result})
         except Exception as e:
-            backlog.append({"task": task, "status": "error", "error": str(e)})
+            entry = {"task": task, "status": "error", "error": str(e)}
+            backlog.append(entry)
             save_backlog(backlog)
             return jsonify({"status": "error", "message": str(e)}), 500
 
@@ -63,7 +65,6 @@ def backlog_list():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# Scheduler rimane disponibile ma non indispensabile
 @app.route("/scheduler/run", methods=["POST"])
 def scheduler_run():
     try:
