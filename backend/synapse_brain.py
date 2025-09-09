@@ -40,10 +40,19 @@ def backlog_add():
             return jsonify({"status": "error", "message": "No task provided"}), 400
 
         backlog = load_backlog()
-        backlog.append({"task": task})
+        backlog.append({"task": task, "status": "pending"})
         save_backlog(backlog)
 
         return jsonify({"status": "success", "message": f"Task added: {task}"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+# 🔹 NUOVO ENDPOINT: lista backlog
+@app.route("/backlog/list", methods=["GET"])
+def backlog_list():
+    try:
+        backlog = load_backlog()
+        return jsonify({"status": "success", "backlog": backlog})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
