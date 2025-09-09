@@ -47,12 +47,36 @@ def backlog_add():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# 🔹 NUOVO ENDPOINT: lista backlog
 @app.route("/backlog/list", methods=["GET"])
 def backlog_list():
     try:
         backlog = load_backlog()
         return jsonify({"status": "success", "backlog": backlog})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+# 🔹 NUOVO ENDPOINT: esegue i task pending
+@app.route("/scheduler/run", methods=["POST"])
+def scheduler_run():
+    try:
+        backlog = load_backlog()
+        results = []
+
+        for task in backlog:
+            if task.get("status") == "pending":
+                try:
+                    result = round_table(task["task"])
+                    task["status"] = "done"
+                    task["result"] = result
+                    results.append({"task": task["task"], "result": result})
+                except Exception as e:
+                    task["status"] = "error"
+                    task["error"] = str(e)
+                    results.append({"task": task["task"], "error": str(e)})
+
+        save_backlog(backlog)
+
+        return jsonify({"status": "success", "processed": results})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
