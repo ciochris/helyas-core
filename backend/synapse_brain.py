@@ -2,6 +2,8 @@ from flask import Flask, request, jsonify
 from backend.orchestrator import round_table
 import json
 import os
+import time
+from datetime import datetime
 
 app = Flask(__name__)
 
@@ -41,18 +43,33 @@ def backlog_add():
 
         backlog = load_backlog()
 
-        # Esegui subito il task
+        # Esegui subito il task con timing
+        start_time = time.time()
         try:
             result = round_table(task)
-            entry = {"task": task, "status": "done", "result": result}
+            execution_time = round(time.time() - start_time, 3)
+            entry = {
+                "task": task,
+                "status": "done",
+                "result": result,
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "execution_time": execution_time
+            }
             backlog.append(entry)
             save_backlog(backlog)
-            return jsonify({"status": "success", "message": f"Task executed: {task}", "result": result})
+            return jsonify({"status": "success", "message": f"Task executed: {task}", "result": result, "execution_time": execution_time})
         except Exception as e:
-            entry = {"task": task, "status": "error", "error": str(e)}
+            execution_time = round(time.time() - start_time, 3)
+            entry = {
+                "task": task,
+                "status": "error",
+                "error": str(e),
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "execution_time": execution_time
+            }
             backlog.append(entry)
             save_backlog(backlog)
-            return jsonify({"status": "error", "message": str(e)}), 500
+            return jsonify({"status": "error", "message": str(e), "execution_time": execution_time}), 500
 
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -73,15 +90,22 @@ def scheduler_run():
 
         for task in backlog:
             if task.get("status") == "pending":
+                start_time = time.time()
                 try:
                     result = round_table(task["task"])
+                    execution_time = round(time.time() - start_time, 3)
                     task["status"] = "done"
                     task["result"] = result
-                    results.append({"task": task["task"], "result": result})
+                    task["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    task["execution_time"] = execution_time
+                    results.append({"task": task["task"], "result": result, "execution_time": execution_time})
                 except Exception as e:
+                    execution_time = round(time.time() - start_time, 3)
                     task["status"] = "error"
                     task["error"] = str(e)
-                    results.append({"task": task["task"], "error": str(e)})
+                    task["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    task["execution_time"] = execution_time
+                    results.append({"task": task["task"], "error": str(e), "execution_time": execution_time})
 
         save_backlog(backlog)
 
