@@ -19,6 +19,19 @@ def save_backlog(backlog):
     with open(BACKLOG_FILE, "w", encoding="utf-8") as f:
         json.dump(backlog, f, indent=2)
 
+# Funzione per pulire i risultati
+def clean_result(result):
+    try:
+        if isinstance(result, dict):
+            # Mostra solo i campi principali
+            return {
+                "decision": result.get("decision", ""),
+                "execution_time": result.get("execution_time", ""),
+            }
+        return str(result)
+    except Exception:
+        return str(result)
+
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"app": "Helyas", "status": "ok"})
@@ -29,7 +42,7 @@ def analyze():
         data = request.get_json(force=True)
         task = data.get("task", "")
         result = round_table(task)
-        return jsonify(result)
+        return jsonify({"task": task, "result": clean_result(result)})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
@@ -43,7 +56,6 @@ def backlog_add():
 
         backlog = load_backlog()
 
-        # Esegui subito il task con timing
         start_time = time.time()
         try:
             result = round_table(task)
@@ -51,13 +63,13 @@ def backlog_add():
             entry = {
                 "task": task,
                 "status": "done",
-                "result": result,
+                "result": clean_result(result),
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "execution_time": execution_time
             }
             backlog.append(entry)
             save_backlog(backlog)
-            return jsonify({"status": "success", "message": f"Task executed: {task}", "result": result, "execution_time": execution_time})
+            return jsonify(entry)
         except Exception as e:
             execution_time = round(time.time() - start_time, 3)
             entry = {
@@ -69,7 +81,7 @@ def backlog_add():
             }
             backlog.append(entry)
             save_backlog(backlog)
-            return jsonify({"status": "error", "message": str(e), "execution_time": execution_time}), 500
+            return jsonify(entry), 500
 
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -78,7 +90,18 @@ def backlog_add():
 def backlog_list():
     try:
         backlog = load_backlog()
-        return jsonify({"status": "success", "backlog": backlog})
+        # Mostriamo solo i campi essenziali
+        simplified = [
+            {
+                "task": t.get("task", ""),
+                "status": t.get("status", ""),
+                "result": t.get("result", ""),
+                "timestamp": t.get("timestamp", ""),
+                "execution_time": t.get("execution_time", "")
+            }
+            for t in backlog
+        ]
+        return jsonify({"status": "success", "backlog": simplified})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
@@ -95,17 +118,17 @@ def scheduler_run():
                     result = round_table(task["task"])
                     execution_time = round(time.time() - start_time, 3)
                     task["status"] = "done"
-                    task["result"] = result
+                    task["result"] = clean_result(result)
                     task["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     task["execution_time"] = execution_time
-                    results.append({"task": task["task"], "result": result, "execution_time": execution_time})
+                    results.append(task)
                 except Exception as e:
                     execution_time = round(time.time() - start_time, 3)
                     task["status"] = "error"
                     task["error"] = str(e)
                     task["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     task["execution_time"] = execution_time
-                    results.append({"task": task["task"], "error": str(e), "execution_time": execution_time})
+                    results.append(task)
 
         save_backlog(backlog)
 
@@ -115,3 +138,4 @@ def scheduler_run():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+
