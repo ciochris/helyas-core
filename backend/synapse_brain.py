@@ -19,15 +19,12 @@ def save_backlog(backlog):
     with open(BACKLOG_FILE, "w", encoding="utf-8") as f:
         json.dump(backlog, f, indent=2)
 
-# Funzione per pulire i risultati
+# Funzione per semplificare i risultati
 def clean_result(result):
     try:
         if isinstance(result, dict):
-            # Mostra solo i campi principali
-            return {
-                "decision": result.get("decision", ""),
-                "execution_time": result.get("execution_time", ""),
-            }
+            decision = result.get("decision", "")
+            return f"Decisione: {decision}" if decision else str(result)
         return str(result)
     except Exception:
         return str(result)
@@ -90,7 +87,6 @@ def backlog_add():
 def backlog_list():
     try:
         backlog = load_backlog()
-        # Mostriamo solo i campi essenziali
         simplified = [
             {
                 "task": t.get("task", ""),
@@ -138,4 +134,3 @@ def scheduler_run():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
-
