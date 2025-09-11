@@ -19,12 +19,18 @@ def save_backlog(backlog):
     with open(BACKLOG_FILE, "w", encoding="utf-8") as f:
         json.dump(backlog, f, indent=2)
 
-# Funzione per semplificare i risultati
+# Funzione per semplificare e pulire i risultati
 def clean_result(result):
     try:
         if isinstance(result, dict):
-            decision = result.get("decision", "")
-            return f"Decisione: {decision}" if decision else str(result)
+            if "decision" in result:
+                decision = result["decision"]
+                # Se la decisione è un dizionario con 'proposal'
+                if isinstance(decision, dict) and "proposal" in decision:
+                    return f"Decisione: {decision['proposal']}"
+                # Se la decisione è testo
+                return f"Decisione: {decision}"
+            return str(result)
         return str(result)
     except Exception:
         return str(result)
