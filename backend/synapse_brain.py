@@ -12,12 +12,18 @@ BACKLOG_FILE = os.path.join("backend", "backlog.json")
 def load_backlog():
     if not os.path.exists(BACKLOG_FILE):
         return []
-    with open(BACKLOG_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open(BACKLOG_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
 
 def save_backlog(backlog):
-    with open(BACKLOG_FILE, "w", encoding="utf-8") as f:
-        json.dump(backlog, f, indent=2)
+    try:
+        with open(BACKLOG_FILE, "w", encoding="utf-8") as f:
+            json.dump(backlog, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print(f"Errore salvataggio backlog: {e}")
 
 # Funzione per semplificare e pulire i risultati
 def clean_result(result):
@@ -25,10 +31,8 @@ def clean_result(result):
         if isinstance(result, dict):
             if "decision" in result:
                 decision = result["decision"]
-                # Se la decisione è un dizionario con 'proposal'
                 if isinstance(decision, dict) and "proposal" in decision:
                     return f"Decisione: {decision['proposal']}"
-                # Se la decisione è testo
                 return f"Decisione: {decision}"
             return str(result)
         return str(result)
@@ -58,8 +62,8 @@ def backlog_add():
             return jsonify({"status": "error", "message": "No task provided"}), 400
 
         backlog = load_backlog()
-
         start_time = time.time()
+
         try:
             result = round_table(task)
             execution_time = round(time.time() - start_time, 3)
@@ -93,6 +97,8 @@ def backlog_add():
 def backlog_list():
     try:
         backlog = load_backlog()
+        if not backlog:
+            return jsonify({"status": "success", "backlog": []})
         simplified = [
             {
                 "task": t.get("task", ""),
@@ -133,7 +139,6 @@ def scheduler_run():
                     results.append(task)
 
         save_backlog(backlog)
-
         return jsonify({"status": "success", "processed": results})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
