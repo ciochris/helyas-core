@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template_string
 from backend.orchestrator import round_table
 import json
 import os
@@ -25,15 +25,14 @@ def save_backlog(backlog):
     except Exception as e:
         print(f"Errore salvataggio backlog: {e}")
 
-# Funzione per semplificare e pulire i risultati
 def clean_result(result):
     try:
         if isinstance(result, dict):
             if "decision" in result:
                 decision = result["decision"]
                 if isinstance(decision, dict) and "proposal" in decision:
-                    return f"Decisione: {decision['proposal']}"
-                return f"Decisione: {decision}"
+                    return decision["proposal"]
+                return str(decision)
             return str(result)
         return str(result)
     except Exception:
@@ -97,8 +96,6 @@ def backlog_add():
 def backlog_list():
     try:
         backlog = load_backlog()
-        if not backlog:
-            return jsonify({"status": "success", "backlog": []})
         simplified = [
             {
                 "task": t.get("task", ""),
@@ -142,6 +139,47 @@ def scheduler_run():
         return jsonify({"status": "success", "processed": results})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
+# 🔹 Dashboard HTML
+@app.route("/dashboard", methods=["GET"])
+def dashboard():
+    backlog = load_backlog()
+    html_template = """
+    <html>
+    <head>
+        <title>Helyas Dashboard</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 20px; }
+            table { border-collapse: collapse; width: 100%; }
+            th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+            th { background-color: #f4f4f4; }
+            tr:nth-child(even) { background-color: #f9f9f9; }
+        </style>
+    </head>
+    <body>
+        <h2>📊 Helyas – Lista Task</h2>
+        <table>
+            <tr>
+                <th>Task</th>
+                <th>Status</th>
+                <th>Result</th>
+                <th>Timestamp</th>
+                <th>Execution Time (s)</th>
+            </tr>
+            {% for t in backlog %}
+            <tr>
+                <td>{{ t.task }}</td>
+                <td>{{ t.status }}</td>
+                <td>{{ t.result }}</td>
+                <td>{{ t.timestamp }}</td>
+                <td>{{ t.execution_time }}</td>
+            </tr>
+            {% endfor %}
+        </table>
+    </body>
+    </html>
+    """
+    return render_template_string(html_template, backlog=backlog)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
