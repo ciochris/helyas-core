@@ -143,7 +143,7 @@ def scheduler_run():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# 🔹 Dashboard HTML v2.2 (minimal + pulsante Vedi dibattito)
+# 🔹 Dashboard HTML v2.3 (log in tabella leggibile)
 @app.route("/dashboard", methods=["GET"])
 def dashboard():
     backlog = load_backlog()
@@ -154,13 +154,16 @@ def dashboard():
         <style>
             body { font-family: Arial, sans-serif; margin: 20px; }
             table { border-collapse: collapse; width: 100%; margin-top: 20px; }
-            th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+            th, td { border: 1px solid #ccc; padding: 8px; text-align: left; vertical-align: top; }
             th { background-color: #f4f4f4; }
             tr:nth-child(even) { background-color: #f9f9f9; }
             .controls { margin-bottom: 20px; }
             input[type=text] { padding: 6px; width: 300px; }
             button { padding: 6px 12px; margin-left: 5px; cursor: pointer; }
-            .log-box { display: none; margin-top: 10px; padding: 10px; border: 1px solid #ccc; background: #fafafa; white-space: pre-wrap; font-size: 12px; }
+            .log-box { display: none; margin-top: 10px; padding: 10px; border: 1px solid #ccc; background: #fafafa; font-size: 12px; }
+            .log-table { border-collapse: collapse; width: 100%; margin-top: 10px; }
+            .log-table th, .log-table td { border: 1px solid #aaa; padding: 6px; text-align: left; }
+            .log-table th { background-color: #ddd; }
         </style>
         <script>
             async function addTask() {
@@ -194,7 +197,7 @@ def dashboard():
                         </tr>
                         <tr>
                             <td colspan="6">
-                                <div id="log-${index}" class="log-box">Caricamento...</div>
+                                <div id="log-${index}" class="log-box"></div>
                             </td>
                         </tr>
                     `;
@@ -209,7 +212,18 @@ def dashboard():
                     const data = await response.json();
                     const task = data.backlog[index];
                     if (task.log && task.log.length > 0) {
-                        logBox.innerText = JSON.stringify(task.log, null, 2);
+                        let html = "<table class='log-table'><tr><th>Agente</th><th>Ruolo</th><th>Proposta</th><th>Rischi</th><th>Lacune</th></tr>";
+                        task.log.forEach(entry => {
+                            html += `<tr>
+                                <td>${entry.agent}</td>
+                                <td>${entry.role}</td>
+                                <td>${entry.proposal}</td>
+                                <td>${entry.risks ? entry.risks.join(", ") : ""}</td>
+                                <td>${entry.gaps ? entry.gaps.join(", ") : ""}</td>
+                            </tr>`;
+                        });
+                        html += "</table>";
+                        logBox.innerHTML = html;
                     } else {
                         logBox.innerText = "Nessun log dettagliato disponibile.";
                     }
