@@ -70,6 +70,7 @@ def backlog_add():
                 "task": task,
                 "status": "done",
                 "result": clean_result(result),
+                "log": result.get("decision", {}).get("log", []),
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "execution_time": execution_time
             }
@@ -102,7 +103,8 @@ def backlog_list():
                 "status": t.get("status", ""),
                 "result": t.get("result", ""),
                 "timestamp": t.get("timestamp", ""),
-                "execution_time": t.get("execution_time", "")
+                "execution_time": t.get("execution_time", ""),
+                "log": t.get("log", [])
             }
             for t in backlog
         ]
@@ -124,6 +126,7 @@ def scheduler_run():
                     execution_time = round(time.time() - start_time, 3)
                     task["status"] = "done"
                     task["result"] = clean_result(result)
+                    task["log"] = result.get("decision", {}).get("log", [])
                     task["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     task["execution_time"] = execution_time
                     results.append(task)
@@ -140,7 +143,7 @@ def scheduler_run():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# 🔹 Dashboard HTML con form e refresh
+# 🔹 Dashboard HTML v2.2 (minimal + log on demand)
 @app.route("/dashboard", methods=["GET"])
 def dashboard():
     backlog = load_backlog()
@@ -156,7 +159,8 @@ def dashboard():
             tr:nth-child(even) { background-color: #f9f9f9; }
             .controls { margin-bottom: 20px; }
             input[type=text] { padding: 6px; width: 300px; }
-            button { padding: 6px 12px; margin-left: 5px; }
+            button { padding: 6px 12px; margin-left: 5px; cursor: pointer; }
+            .log-box { display: none; margin-top: 10px; padding: 10px; border: 1px solid #ccc; background: #fafafa; white-space: pre-wrap; font-size: 12px; }
         </style>
         <script>
             async function addTask() {
@@ -178,16 +182,41 @@ def dashboard():
                 const data = await response.json();
                 const tableBody = document.getElementById('taskTableBody');
                 tableBody.innerHTML = '';
-                data.backlog.forEach(t => {
-                    const row = `<tr>
-                        <td>${t.task}</td>
-                        <td>${t.status}</td>
-                        <td>${t.result}</td>
-                        <td>${t.timestamp}</td>
-                        <td>${t.execution_time}</td>
-                    </tr>`;
+                data.backlog.forEach((t, index) => {
+                    const row = `
+                        <tr>
+                            <td>${t.task}</td>
+                            <td>${t.status}</td>
+                            <td>${t.result}</td>
+                            <td>${t.timestamp}</td>
+                            <td>${t.execution_time}</td>
+                            <td><button onclick="toggleLog(${index})">Vedi dibattito</button></td>
+                        </tr>
+                        <tr>
+                            <td colspan="6">
+                                <div id="log-${index}" class="log-box">Caricamento...</div>
+                            </td>
+                        </tr>
+                    `;
                     tableBody.innerHTML += row;
                 });
+            }
+
+            async function toggleLog(index) {
+                const logBox = document.getElementById('log-' + index);
+                if (logBox.style.display === "none" || logBox.style.display === "") {
+                    const response = await fetch('/backlog/list');
+                    const data = await response.json();
+                    const task = data.backlog[index];
+                    if (task.log && task.log.length > 0) {
+                        logBox.innerText = JSON.stringify(task.log, null, 2);
+                    } else {
+                        logBox.innerText = "Nessun log dettagliato disponibile.";
+                    }
+                    logBox.style.display = "block";
+                } else {
+                    logBox.style.display = "none";
+                }
             }
 
             window.onload = loadTasks;
@@ -207,6 +236,7 @@ def dashboard():
                 <th>Result</th>
                 <th>Timestamp</th>
                 <th>Execution Time (s)</th>
+                <th>Dettagli</th>
             </tr>
             <tbody id="taskTableBody">
             </tbody>
