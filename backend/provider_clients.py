@@ -1,104 +1,94 @@
 import os
-import time
-from typing import Dict, Optional
+import json
+import requests
 
-def get_gpt_response(task: str) -> Dict:
-    """
-    Chiama GPT con gestione timeout e errori
-    """
-    try:
-        # Lazy import per ridurre memoria
-        import openai
-        
-        api_key = os.getenv('OPENAI_API_KEY')
-        if not api_key:
-            return {
-                "proposal": "[CONFIG ERROR] OpenAI API key mancante",
-                "error": "OPENAI_API_KEY non configurata"
-            }
-        
-        client = openai.OpenAI(api_key=api_key, timeout=15.0)
-        
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[{
-                "role": "user", 
-                "content": f"Task: {task}\nFornisci una proposta concreta e pratica."
-            }],
-            max_tokens=500,
-            timeout=15
-        )
-        
-        proposal = response.choices[0].message.content.strip()
-        
-        return {
-            "proposal": proposal,
-            "model": "gpt-3.5-turbo",
-            "tokens": response.usage.total_tokens if response.usage else 0
-        }
-        
-    except Exception as e:
-        return {
-            "proposal": f"[GPT ERROR] {str(e)[:100]}",
-            "error": str(e)
-        }
+# 🔑 Legge chiavi API dalle variabili d’ambiente (da impostare su Railway)
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-def get_claude_response(task: str) -> Dict:
-    """
-    Chiama Claude con gestione timeout e errori
-    """
-    try:
-        # Lazy import per ridurre memoria
-        import anthropic
-        
-        api_key = os.getenv('ANTHROPIC_API_KEY')
-        if not api_key:
-            return {
-                "proposal": "[CONFIG ERROR] Claude API key mancante", 
-                "error": "ANTHROPIC_API_KEY non configurata"
-            }
-        
-        client = anthropic.Anthropic(api_key=api_key, timeout=15.0)
-        
-        response = client.messages.create(
-            model="claude-3-haiku-20240307",
-            max_tokens=500,
-            messages=[{
-                "role": "user",
-                "content": f"Task: {task}\nFornisci una risposta pratica e dettagliata."
-            }],
-            timeout=15
-        )
-        
-        proposal = response.content[0].text.strip()
-        
-        return {
-            "proposal": proposal,
-            "model": "claude-3-haiku",
-            "tokens": response.usage.input_tokens + response.usage.output_tokens
-        }
-        
-    except Exception as e:
-        return {
-            "proposal": f"[CLAUDE ERROR] {str(e)[:100]}",
-            "error": str(e)
-        }
+# 🧩 Prompt standard: ogni modello deve rispondere in JSON
+ROUND_TABLE_PROMPT = """
+Sei parte del Round Table AI.
+Ruolo: {role}
+Task: {task}
 
-def get_gemini_response(task: str) -> Dict:
-    """
-    Mock Gemini per ora - da sostituire con API reale quando disponibile
-    """
+Rispondi SOLO in JSON con il formato:
+{
+  "task_id": "{task_id}",
+  "agent": "{agent}",
+  "role": "{role}",
+  "proposal": "testo della proposta",
+  "risks": ["rischio1", "rischio2"],
+  "gaps": ["lacuna1", "lacuna2"],
+  "artifacts": [
+    {"name": "nome_file.txt", "type": "text", "content": "contenuto"}
+  ]
+}
+"""
+
+# 🔹 Funzione per chiamare OpenAI GPT
+def ask_openai(task_id, role, task, agent="ChatGPT"):
     try:
-        time.sleep(1)  # Simula latenza
-        
-        return {
-            "proposal": f"[GEMINI MOCK] Analisi task '{task[:30]}...': suggerisco approccio graduale con focus su ROI immediato",
-            "model": "gemini-mock",
-            "tokens": 50
+        headers = {
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Content-Type": "application/json"
         }
-        
+        data = {
+            "model": "gpt-4o-mini",  # puoi cambiare modello
+            "messages": [{"role": "user", "content": ROUND_TABLE_PROMPT.format(
+                role=role, task=task, task_id=task_id, agent=agent
+            )}],
+            "temperature": 0.7
+        }
+        response = requests.post("https://api.openai.com/v1/chat/completions",
+                                 headers=headers, json=data, timeout=60)
+        result = response.json()
+        content = result["choices"][0]["message"]["content"]
+        return json.loads(content)
     except Exception as e:
-        return {
-            "proposal": f"[GEMINI ERROR] {str(e)[:100]}",
-            "error": str(e)
+        return {"task_id": task_id, "agent": agent, "role": role, "error": str(e)}
+
+# 🔹 Funzione per chiamare Claude
+def ask_claude(task_id, role, task, agent="Claude"):
+    try:
+        headers = {
+            "x-api-key": ANTHROPIC_API_KEY,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json"
         }
+        data = {
+            "model": "claude-3-sonnet-20240229",
+            "max_tokens": 800,
+            "messages": [
+                {"role": "user", "content": ROUND_TABLE_PROMPT.format(
+                    role=role, task=task, task_id=task_id, agent=agent
+                )}
+            ]
+        }
+        response = requests.post("https://api.anthropic.com/v1/messages",
+                                 headers=headers, json=data, timeout=60)
+        result = response.json()
+        content = result["content"][0]["text"]
+        return json.loads(content)
+    except Exception as e:
+        return {"task_id": task_id, "agent": agent, "role": role, "error": str(e)}
+
+# 🔹 Funzione per chiamare Gemini
+def ask_gemini(task_id, role, task, agent="Gemini"):
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key={GEMINI_API_KEY}"
+        headers = {"Content-Type": "application/json"}
+        data = {
+            "contents": [{
+                "parts": [{"text": ROUND_TABLE_PROMPT.format(
+                    role=role, task=task, task_id=task_id, agent=agent
+                )}]
+            }]
+        }
+        response = requests.post(url, headers=headers, json=data, timeout=60)
+        result = response.json()
+        content = result["candidates"][0]["content"]["parts"][0]["text"]
+        return json.loads(content)
+    except Exception as e:
+        return {"task_id": task_id, "agent": agent, "role": role, "error": str(e)}
