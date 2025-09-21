@@ -140,7 +140,7 @@ def scheduler_run():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# 🔹 Dashboard HTML
+# 🔹 Dashboard HTML con form e refresh
 @app.route("/dashboard", methods=["GET"])
 def dashboard():
     backlog = load_backlog()
@@ -150,14 +150,56 @@ def dashboard():
         <title>Helyas Dashboard</title>
         <style>
             body { font-family: Arial, sans-serif; margin: 20px; }
-            table { border-collapse: collapse; width: 100%; }
+            table { border-collapse: collapse; width: 100%; margin-top: 20px; }
             th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
             th { background-color: #f4f4f4; }
             tr:nth-child(even) { background-color: #f9f9f9; }
+            .controls { margin-bottom: 20px; }
+            input[type=text] { padding: 6px; width: 300px; }
+            button { padding: 6px 12px; margin-left: 5px; }
         </style>
+        <script>
+            async function addTask() {
+                const task = document.getElementById('taskInput').value;
+                if (!task) { alert("Inserisci un task!"); return; }
+
+                const response = await fetch('/backlog/add', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ task: task })
+                });
+                const result = await response.json();
+                alert("Task aggiunto: " + result.task);
+                loadTasks();
+            }
+
+            async function loadTasks() {
+                const response = await fetch('/backlog/list');
+                const data = await response.json();
+                const tableBody = document.getElementById('taskTableBody');
+                tableBody.innerHTML = '';
+                data.backlog.forEach(t => {
+                    const row = `<tr>
+                        <td>${t.task}</td>
+                        <td>${t.status}</td>
+                        <td>${t.result}</td>
+                        <td>${t.timestamp}</td>
+                        <td>${t.execution_time}</td>
+                    </tr>`;
+                    tableBody.innerHTML += row;
+                });
+            }
+
+            window.onload = loadTasks;
+        </script>
     </head>
     <body>
-        <h2>📊 Helyas – Lista Task</h2>
+        <h2>📊 Helyas – Dashboard</h2>
+        <div class="controls">
+            <input type="text" id="taskInput" placeholder="Scrivi un nuovo task..."/>
+            <button onclick="addTask()">Aggiungi Task</button>
+            <button onclick="loadTasks()">Aggiorna</button>
+        </div>
         <table>
             <tr>
                 <th>Task</th>
@@ -166,15 +208,8 @@ def dashboard():
                 <th>Timestamp</th>
                 <th>Execution Time (s)</th>
             </tr>
-            {% for t in backlog %}
-            <tr>
-                <td>{{ t.task }}</td>
-                <td>{{ t.status }}</td>
-                <td>{{ t.result }}</td>
-                <td>{{ t.timestamp }}</td>
-                <td>{{ t.execution_time }}</td>
-            </tr>
-            {% endfor %}
+            <tbody id="taskTableBody">
+            </tbody>
         </table>
     </body>
     </html>
