@@ -143,7 +143,7 @@ def scheduler_run():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# 🔹 Dashboard HTML v2.2 (minimal + log on demand)
+# 🔹 Dashboard HTML v2.2 (minimal + pulsante Vedi dibattito)
 @app.route("/dashboard", methods=["GET"])
 def dashboard():
     backlog = load_backlog()
