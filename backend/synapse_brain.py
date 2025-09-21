@@ -143,7 +143,7 @@ def scheduler_run():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# 🔹 Dashboard HTML v2.3 (log in tabella leggibile)
+# 🔹 Dashboard HTML v2.4 (log in tabella con colori ruoli)
 @app.route("/dashboard", methods=["GET"])
 def dashboard():
     backlog = load_backlog()
@@ -164,6 +164,11 @@ def dashboard():
             .log-table { border-collapse: collapse; width: 100%; margin-top: 10px; }
             .log-table th, .log-table td { border: 1px solid #aaa; padding: 6px; text-align: left; }
             .log-table th { background-color: #ddd; }
+            .role-Analyst { color: blue; font-weight: bold; }
+            .role-Planner { color: green; font-weight: bold; }
+            .role-Builder { color: orange; font-weight: bold; }
+            .role-Critic { color: red; font-weight: bold; }
+            .role-Other { color: gray; font-weight: bold; }
         </style>
         <script>
             async function addTask() {
@@ -214,9 +219,10 @@ def dashboard():
                     if (task.log && task.log.length > 0) {
                         let html = "<table class='log-table'><tr><th>Agente</th><th>Ruolo</th><th>Proposta</th><th>Rischi</th><th>Lacune</th></tr>";
                         task.log.forEach(entry => {
+                            const roleClass = "role-" + (entry.role || "Other");
                             html += `<tr>
                                 <td>${entry.agent}</td>
-                                <td>${entry.role}</td>
+                                <td class='${roleClass}'>${entry.role}</td>
                                 <td>${entry.proposal}</td>
                                 <td>${entry.risks ? entry.risks.join(", ") : ""}</td>
                                 <td>${entry.gaps ? entry.gaps.join(", ") : ""}</td>
