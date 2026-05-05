@@ -1,36 +1,173 @@
+import os
 import json
 import difflib
 
-# Simulazione provider AI (da sostituire con chiamate API reali)
-def ask_ai(agent_name, role, task, context=None):
-    response = {
-        "task_id": f"rt-task",
+# ── Configurazione provider ──────────────────────────────────────────────────
+ENABLE_GPT    = os.getenv("ENABLE_GPT",    "true").lower() == "true"
+ENABLE_CLAUDE = os.getenv("ENABLE_CLAUDE", "true").lower() == "true"
+ENABLE_GEMINI = os.getenv("ENABLE_GEMINI", "true").lower() == "true"
+
+OPENAI_API_KEY    = os.getenv("OPENAI_API_KEY", "")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+GOOGLE_API_KEY    = os.getenv("GOOGLE_API_KEY", "")
+
+OPENAI_MODEL  = os.getenv("OPENAI_MODEL",  "gpt-4o-mini")
+CLAUDE_MODEL  = os.getenv("CLAUDE_MODEL",  "claude-haiku-4-5-20251001")
+GEMINI_MODEL  = os.getenv("GEMINI_MODEL",  "gemini-1.5-flash")
+
+# ── Chiamate API reali ───────────────────────────────────────────────────────
+
+def call_openai(prompt: str) -> str:
+    try:
+        import openai
+        client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        response = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=500,
+            temperature=0.7
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        return f"[GPT ERROR] {e}"
+
+
+def call_claude(prompt: str) -> str:
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        response = client.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=500,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return response.content[0].text.strip()
+    except Exception as e:
+        return f"[CLAUDE ERROR] {e}"
+
+
+def call_gemini(prompt: str) -> str:
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=GOOGLE_API_KEY)
+        model = genai.GenerativeModel(GEMINI_MODEL)
+        response = model.generate_content(prompt)
+        return response.text.strip()
+    except Exception as e:
+        return f"[GEMINI ERROR] {e}"
+
+
+# ── Prompt per ogni ruolo ────────────────────────────────────────────────────
+
+def build_prompt(agent_name: str, role: str, task: str, context: list = None) -> str:
+    role_instructions = {
+        "Analyst":  "Analizza il problema in modo critico. Identifica i punti chiave, rischi principali e lacune informative. Sii conciso (max 150 parole).",
+        "Planner":  "Proponi un piano d'azione strutturato per risolvere il problema. Elenca i passi principali. Sii conciso (max 150 parole).",
+        "Builder":  "Proponi una soluzione concreta e implementabile. Concentrati su cosa fare praticamente. Sii conciso (max 150 parole).",
+        "Critic":   "Critica costruttivamente le soluzioni proposte. Identifica debolezze, rischi non considerati e suggerisci miglioramenti. Sii conciso (max 150 parole)."
+    }
+
+    context_text = ""
+    if context:
+        last = context[-1]
+        context_text = f"\n\nContesto dal round precedente:\nAgente: {last.get('agent')}, Ruolo: {last.get('role')}\nProposta: {last.get('proposal')}\n"
+
+    return f"""Sei {agent_name} nel ruolo di {role} in una sessione di analisi collaborativa multi-AI.
+
+{role_instructions.get(role, 'Contribuisci con la tua prospettiva.')}
+{context_text}
+Task da analizzare: {task}
+
+Rispondi in italiano. Fornisci:
+1. PROPOSTA: la tua analisi/soluzione
+2. RISCHI: 2-3 rischi principali (formato: "- rischio")
+3. LACUNE: 1-2 informazioni mancanti (formato: "- lacuna")
+"""
+
+
+def parse_response(text: str) -> dict:
+    """Estrae proposta, rischi e lacune dal testo libero dell'AI."""
+    proposal, risks, gaps = "", [], []
+    current = None
+
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if "PROPOSTA:" in line.upper():
+            current = "proposal"
+            proposal = line.split(":", 1)[-1].strip()
+        elif "RISCHI:" in line.upper():
+            current = "risks"
+        elif "LACUNE:" in line.upper():
+            current = "gaps"
+        elif line.startswith("-"):
+            if current == "risks":
+                risks.append(line[1:].strip())
+            elif current == "gaps":
+                gaps.append(line[1:].strip())
+        elif current == "proposal" and proposal:
+            proposal += " " + line
+
+    if not proposal:
+        proposal = text[:300]
+
+    return {"proposal": proposal, "risks": risks, "gaps": gaps}
+
+
+# ── Agente principale ────────────────────────────────────────────────────────
+
+def ask_ai(agent_name: str, role: str, task: str, context: list = None) -> dict:
+    prompt = build_prompt(agent_name, role, task, context)
+
+    if agent_name == "ChatGPT" and ENABLE_GPT:
+        raw = call_openai(prompt)
+    elif agent_name == "Claude" and ENABLE_CLAUDE:
+        raw = call_claude(prompt)
+    elif agent_name == "Gemini" and ENABLE_GEMINI:
+        raw = call_gemini(prompt)
+    else:
+        raw = f"[{agent_name}] Provider disabilitato o non configurato."
+
+    parsed = parse_response(raw)
+
+    return {
+        "task_id": "rt-task",
         "agent": agent_name,
         "role": role,
-        "proposal": f"[{agent_name}] ({role}) proposta sul task: {task}",
-        "risks": [f"rischio generico individuato da {agent_name}"],
-        "gaps": [f"lacuna individuata da {agent_name}"],
+        "proposal": parsed["proposal"],
+        "risks": parsed["risks"],
+        "gaps": parsed["gaps"],
+        "raw": raw,
         "artifacts": [
-            {"name": f"{agent_name}_artifact.txt", "type": "text", "content": f"output simulato da {agent_name}"}
+            {"name": f"{agent_name}_{role}.txt", "type": "text", "content": raw}
         ]
     }
-    if context:
-        response["context_used"] = context
-    return response
 
-def is_consensus(logs, threshold=0.8):
-    """Controlla se le proposte degli agenti sono sufficientemente simili"""
-    proposals = [log["proposal"] for log in logs]
+
+# ── Consenso ─────────────────────────────────────────────────────────────────
+
+def is_consensus(logs: list, threshold: float = 0.6) -> bool:
+    proposals = [log["proposal"] for log in logs if log["proposal"]]
     if len(proposals) < 2:
         return False
     base = proposals[0]
     matches = [difflib.SequenceMatcher(None, base, p).ratio() for p in proposals[1:]]
     return all(m > threshold for m in matches)
 
-def round_table(task: str, max_rounds: int = 5):
-    agents = ["ChatGPT", "Claude", "Gemini"]
-    roles = ["Analyst", "Planner", "Builder", "Critic"]
 
+# ── Round Table principale ────────────────────────────────────────────────────
+
+def round_table(task: str, max_rounds: int = 2) -> dict:
+    agents = []
+    if ENABLE_GPT:    agents.append("ChatGPT")
+    if ENABLE_CLAUDE: agents.append("Claude")
+    if ENABLE_GEMINI: agents.append("Gemini")
+
+    if not agents:
+        return {"decision": {"summary": "Nessun provider AI abilitato.", "decisions": [], "log": []}}
+
+    roles = ["Analyst", "Planner", "Builder", "Critic"]
     history = []
     round_count = 0
     consensus_reached = False
@@ -39,28 +176,27 @@ def round_table(task: str, max_rounds: int = 5):
         round_count += 1
         round_logs = []
 
-        # Ogni agente contribuisce con tutti i ruoli dinamici
         for agent in agents:
-            context = [entry for entry in history[-len(agents):]] if history else None
+            context = history[-len(agents):] if history else None
             for role in roles:
                 entry = ask_ai(agent, role, task, context)
                 round_logs.append(entry)
 
         history.extend(round_logs)
 
-        # Controllo consenso sulle ultime proposte da ogni agente
-        latest_by_agent = []
-        for agent in agents:
-            proposals = [log for log in round_logs if log["agent"] == agent]
-            if proposals:
-                latest_by_agent.append(proposals[-1])
-
-        if latest_by_agent and is_consensus(latest_by_agent):
+        # Controlla consenso sull'ultimo ruolo (Critic) di ogni agente
+        latest = [next((l for l in reversed(round_logs) if l["agent"] == a), None) for a in agents]
+        latest = [l for l in latest if l]
+        if latest and is_consensus(latest):
             consensus_reached = True
 
-    # Sintesi finale (Synthesizer/Moderator)
+    # Sintesi finale
+    final_proposals = [log["proposal"] for log in history if log["role"] == "Builder"]
+    synthesis = " | ".join(final_proposals[:3]) if final_proposals else "Nessuna proposta raccolta."
+
     final_summary = {
         "summary": f"Sintesi dopo {round_count} round - consenso={'sì' if consensus_reached else 'no'}",
+        "synthesis": synthesis,
         "decisions": [log["proposal"] for log in history[-len(agents):]],
         "final_artifacts": [a["name"] for log in history[-len(agents):] for a in log.get("artifacts", [])],
         "approval_requested": True,
