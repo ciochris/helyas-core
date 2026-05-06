@@ -59,7 +59,7 @@ def call_gemini(prompt: str) -> str:
 
 # ── Prompt per ogni ruolo ────────────────────────────────────────────────────
 
-def build_prompt(agent_name: str, role: str, task: str, context: list = None) -> str:
+def build_prompt(agent_name: str, role: str, task: str, context: list = None, session_context: list = None) -> str:
     role_instructions = {
         "Analyst":  "Analizza il problema in modo critico. Identifica i punti chiave, rischi principali e lacune informative. Sii conciso (max 150 parole).",
         "Planner":  "Proponi un piano d'azione strutturato per risolvere il problema. Elenca i passi principali. Sii conciso (max 150 parole).",
@@ -67,6 +67,19 @@ def build_prompt(agent_name: str, role: str, task: str, context: list = None) ->
         "Critic":   "Critica costruttivamente le soluzioni proposte. Identifica debolezze, rischi non considerati e suggerisci miglioramenti. Sii conciso (max 150 parole)."
     }
 
+    # Contesto della sessione (storico conversazione)
+    session_text = ""
+    if session_context and len(session_context) > 1:
+        # Prende ultimi 6 messaggi per non appesantire il prompt
+        recent = session_context[-6:]
+        lines = []
+        for msg in recent:
+            role_label = "Utente" if msg.get("role") == "user" else "Helyas"
+            content = (msg.get("content") or "")[:200]
+            lines.append(f"{role_label}: {content}")
+        session_text = "\n\nCONTESTO SESSIONE (messaggi precedenti):\n" + "\n".join(lines) + "\n\nTieni conto di questo contesto nella tua risposta."
+
+    # Contesto del round precedente
     context_text = ""
     if context:
         last = context[-1]
@@ -74,7 +87,8 @@ def build_prompt(agent_name: str, role: str, task: str, context: list = None) ->
 
     return f"""Sei {agent_name} nel ruolo di {role} in una sessione di analisi collaborativa multi-AI.
 
-{role_instructions.get(role, 'Contribuisci con la tua prospettiva.')}
+{role_instructions.get(role, 'Contribuisci con la tua perspettiva.')}
+{session_text}
 {context_text}
 Task da analizzare: {task}
 
@@ -117,8 +131,8 @@ def parse_response(text: str) -> dict:
 
 # ── Agente principale ────────────────────────────────────────────────────────
 
-def ask_ai(agent_name: str, role: str, task: str, context: list = None) -> dict:
-    prompt = build_prompt(agent_name, role, task, context)
+def ask_ai(agent_name: str, role: str, task: str, context: list = None, session_context: list = None) -> dict:
+    prompt = build_prompt(agent_name, role, task, context, session_context)
 
     if agent_name == "ChatGPT" and ENABLE_GPT:
         raw = call_openai(prompt)
@@ -158,7 +172,7 @@ def is_consensus(logs: list, threshold: float = 0.6) -> bool:
 
 # ── Round Table principale ────────────────────────────────────────────────────
 
-def round_table(task: str, max_rounds: int = 2) -> dict:
+def round_table(task: str, max_rounds: int = 2, session_context: list = None) -> dict:
     agents = []
     if ENABLE_GPT:    agents.append("ChatGPT")
     if ENABLE_CLAUDE: agents.append("Claude")
@@ -179,7 +193,7 @@ def round_table(task: str, max_rounds: int = 2) -> dict:
         for agent in agents:
             context = history[-len(agents):] if history else None
             for role in roles:
-                entry = ask_ai(agent, role, task, context)
+                entry = ask_ai(agent, role, task, context, session_context)
                 round_logs.append(entry)
 
         history.extend(round_logs)
