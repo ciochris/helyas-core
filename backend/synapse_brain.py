@@ -28,12 +28,10 @@ def save_backlog(backlog):
 def clean_result(result):
     try:
         if isinstance(result, dict):
-            if "decision" in result:
-                decision = result["decision"]
-                if isinstance(decision, dict) and "proposal" in decision:
-                    return decision["proposal"]
-                return str(decision)
-            return str(result)
+            decision = result.get("decision", {})
+            synthesis = decision.get("synthesis", "")
+            summary = decision.get("summary", "")
+            return synthesis if synthesis else summary
         return str(result)
     except Exception:
         return str(result)
@@ -66,11 +64,14 @@ def backlog_add():
         try:
             result = round_table(task)
             execution_time = round(time.time() - start_time, 3)
+            decision = result.get("decision", {})
             entry = {
                 "task": task,
                 "status": "done",
                 "result": clean_result(result),
-                "log": result.get("decision", {}).get("log", []),
+                "synthesis": decision.get("synthesis", ""),
+                "summary": decision.get("summary", ""),
+                "log": decision.get("log", []),
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "execution_time": execution_time
             }
@@ -102,6 +103,8 @@ def backlog_list():
                 "task": t.get("task", ""),
                 "status": t.get("status", ""),
                 "result": t.get("result", ""),
+                "synthesis": t.get("synthesis", ""),
+                "summary": t.get("summary", ""),
                 "timestamp": t.get("timestamp", ""),
                 "execution_time": t.get("execution_time", ""),
                 "log": t.get("log", [])
@@ -117,154 +120,318 @@ def scheduler_run():
     try:
         backlog = load_backlog()
         results = []
-
         for task in backlog:
             if task.get("status") == "pending":
                 start_time = time.time()
                 try:
                     result = round_table(task["task"])
                     execution_time = round(time.time() - start_time, 3)
+                    decision = result.get("decision", {})
                     task["status"] = "done"
                     task["result"] = clean_result(result)
-                    task["log"] = result.get("decision", {}).get("log", [])
+                    task["synthesis"] = decision.get("synthesis", "")
+                    task["log"] = decision.get("log", [])
                     task["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     task["execution_time"] = execution_time
                     results.append(task)
                 except Exception as e:
-                    execution_time = round(time.time() - start_time, 3)
                     task["status"] = "error"
                     task["error"] = str(e)
                     task["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    task["execution_time"] = execution_time
                     results.append(task)
-
         save_backlog(backlog)
         return jsonify({"status": "success", "processed": results})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# 🔹 Dashboard HTML v2.4 (log in tabella con colori ruoli)
 @app.route("/dashboard", methods=["GET"])
 def dashboard():
-    backlog = load_backlog()
     html_template = """
-    <html>
+    <!DOCTYPE html>
+    <html lang="it">
     <head>
+        <meta charset="UTF-8">
         <title>Helyas Dashboard</title>
         <style>
-            body { font-family: Arial, sans-serif; margin: 20px; }
-            table { border-collapse: collapse; width: 100%; margin-top: 20px; }
-            th, td { border: 1px solid #ccc; padding: 8px; text-align: left; vertical-align: top; }
-            th { background-color: #f4f4f4; }
-            tr:nth-child(even) { background-color: #f9f9f9; }
-            .controls { margin-bottom: 20px; }
-            input[type=text] { padding: 6px; width: 300px; }
-            button { padding: 6px 12px; margin-left: 5px; cursor: pointer; }
-            .log-box { display: none; margin-top: 10px; padding: 10px; border: 1px solid #ccc; background: #fafafa; font-size: 12px; }
-            .log-table { border-collapse: collapse; width: 100%; margin-top: 10px; }
-            .log-table th, .log-table td { border: 1px solid #aaa; padding: 6px; text-align: left; }
-            .log-table th { background-color: #ddd; }
-            .role-Analyst { color: blue; font-weight: bold; }
-            .role-Planner { color: green; font-weight: bold; }
-            .role-Builder { color: orange; font-weight: bold; }
-            .role-Critic { color: red; font-weight: bold; }
-            .role-Other { color: gray; font-weight: bold; }
+            * { box-sizing: border-box; margin: 0; padding: 0; }
+            body { font-family: 'Segoe UI', Arial, sans-serif; background: #f0f2f5; color: #222; }
+
+            header {
+                background: linear-gradient(135deg, #1a1a2e, #16213e);
+                color: white;
+                padding: 20px 30px;
+                display: flex;
+                align-items: center;
+                gap: 12px;
+            }
+            header h1 { font-size: 1.6rem; font-weight: 600; }
+            header span { font-size: 1.8rem; }
+
+            .container { max-width: 1100px; margin: 30px auto; padding: 0 20px; }
+
+            .input-box {
+                background: white;
+                border-radius: 12px;
+                padding: 20px;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+                margin-bottom: 24px;
+                display: flex;
+                gap: 10px;
+                align-items: center;
+            }
+            .input-box input {
+                flex: 1;
+                padding: 10px 14px;
+                border: 1px solid #ddd;
+                border-radius: 8px;
+                font-size: 15px;
+            }
+            .input-box select {
+                padding: 10px 12px;
+                border: 1px solid #ddd;
+                border-radius: 8px;
+                font-size: 14px;
+                background: white;
+            }
+            .btn {
+                padding: 10px 20px;
+                border: none;
+                border-radius: 8px;
+                cursor: pointer;
+                font-size: 14px;
+                font-weight: 600;
+            }
+            .btn-primary { background: #4f46e5; color: white; }
+            .btn-primary:hover { background: #4338ca; }
+            .btn-secondary { background: #e5e7eb; color: #374151; }
+            .btn-secondary:hover { background: #d1d5db; }
+
+            .loading {
+                display: none;
+                text-align: center;
+                padding: 20px;
+                color: #6b7280;
+                font-style: italic;
+            }
+
+            .task-card {
+                background: white;
+                border-radius: 12px;
+                padding: 20px;
+                margin-bottom: 16px;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+                border-left: 4px solid #4f46e5;
+            }
+            .task-card.error { border-left-color: #ef4444; }
+
+            .task-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: flex-start;
+                margin-bottom: 12px;
+            }
+            .task-title { font-weight: 700; font-size: 1rem; color: #1f2937; flex: 1; }
+            .task-meta { font-size: 12px; color: #9ca3af; text-align: right; margin-left: 10px; }
+
+            .badge {
+                display: inline-block;
+                padding: 2px 10px;
+                border-radius: 20px;
+                font-size: 12px;
+                font-weight: 600;
+                margin-bottom: 8px;
+            }
+            .badge-done { background: #d1fae5; color: #065f46; }
+            .badge-error { background: #fee2e2; color: #991b1b; }
+
+            .synthesis-box {
+                background: #f0fdf4;
+                border: 1px solid #bbf7d0;
+                border-radius: 8px;
+                padding: 14px;
+                margin-bottom: 12px;
+                font-size: 14px;
+                line-height: 1.6;
+            }
+            .synthesis-label {
+                font-size: 11px;
+                font-weight: 700;
+                text-transform: uppercase;
+                color: #059669;
+                margin-bottom: 6px;
+            }
+
+            .toggle-btn {
+                background: none;
+                border: 1px solid #e5e7eb;
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-size: 13px;
+                cursor: pointer;
+                color: #6b7280;
+            }
+            .toggle-btn:hover { background: #f9fafb; }
+
+            .debate-box {
+                display: none;
+                margin-top: 14px;
+            }
+            .debate-box table {
+                width: 100%;
+                border-collapse: collapse;
+                font-size: 13px;
+            }
+            .debate-box th {
+                background: #f3f4f6;
+                padding: 8px 10px;
+                text-align: left;
+                font-weight: 600;
+                color: #374151;
+                border-bottom: 2px solid #e5e7eb;
+            }
+            .debate-box td {
+                padding: 8px 10px;
+                border-bottom: 1px solid #f3f4f6;
+                vertical-align: top;
+            }
+            .debate-box tr:last-child td { border-bottom: none; }
+
+            .role-Analyst { color: #2563eb; font-weight: 700; }
+            .role-Planner { color: #16a34a; font-weight: 700; }
+            .role-Builder { color: #d97706; font-weight: 700; }
+            .role-Critic  { color: #dc2626; font-weight: 700; }
+
+            .agent-gpt { color: #10a37f; font-weight: 600; }
+            .agent-claude { color: #c17f24; font-weight: 600; }
+            .agent-gemini { color: #4285f4; font-weight: 600; }
+
+            .empty { text-align: center; color: #9ca3af; padding: 40px; font-size: 15px; }
         </style>
+    </head>
+    <body>
+        <header>
+            <span>🧠</span>
+            <h1>Helyas – Round Table AI</h1>
+        </header>
+
+        <div class="container">
+            <div class="input-box">
+                <input type="text" id="taskInput" placeholder="Scrivi un task per Helyas..." />
+                <select id="roundsSelect">
+                    <option value="1">Rapida (1 round)</option>
+                    <option value="2" selected>Standard (2 round)</option>
+                    <option value="3">Approfondita (3 round)</option>
+                    <option value="5">Completa (5 round)</option>
+                    <option value="8">Massima (8 round)</option>
+                </select>
+                <button class="btn btn-primary" onclick="addTask()">▶ Avvia</button>
+                <button class="btn btn-secondary" onclick="loadTasks()">↻ Aggiorna</button>
+            </div>
+
+            <div class="loading" id="loading">
+                ⏳ Helyas sta elaborando... potrebbe richiedere 1-3 minuti.
+            </div>
+
+            <div id="taskList"></div>
+        </div>
+
         <script>
             async function addTask() {
-                const task = document.getElementById('taskInput').value;
+                const task = document.getElementById('taskInput').value.trim();
+                const rounds = document.getElementById('roundsSelect').value;
                 if (!task) { alert("Inserisci un task!"); return; }
 
-                const response = await fetch('/backlog/add', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ task: task })
-                });
-                const result = await response.json();
-                alert("Task aggiunto: " + result.task);
-                loadTasks();
+                document.getElementById('loading').style.display = 'block';
+                document.querySelector('.btn-primary').disabled = true;
+
+                try {
+                    const response = await fetch('/backlog/add', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ task: task, max_rounds: parseInt(rounds) })
+                    });
+                    const result = await response.json();
+                    document.getElementById('taskInput').value = '';
+                    loadTasks();
+                } catch(e) {
+                    alert("Errore: " + e.message);
+                } finally {
+                    document.getElementById('loading').style.display = 'none';
+                    document.querySelector('.btn-primary').disabled = false;
+                }
             }
 
             async function loadTasks() {
                 const response = await fetch('/backlog/list');
                 const data = await response.json();
-                const tableBody = document.getElementById('taskTableBody');
-                tableBody.innerHTML = '';
-                data.backlog.forEach((t, index) => {
-                    const row = `
-                        <tr>
-                            <td>${t.task}</td>
-                            <td>${t.status}</td>
-                            <td>${t.result}</td>
-                            <td>${t.timestamp}</td>
-                            <td>${t.execution_time}</td>
-                            <td><button onclick="toggleLog(${index})">Vedi dibattito</button></td>
-                        </tr>
-                        <tr>
-                            <td colspan="6">
-                                <div id="log-${index}" class="log-box"></div>
-                            </td>
-                        </tr>
+                const list = document.getElementById('taskList');
+
+                if (!data.backlog || data.backlog.length === 0) {
+                    list.innerHTML = '<div class="empty">Nessun task ancora. Scrivi qualcosa sopra per iniziare.</div>';
+                    return;
+                }
+
+                list.innerHTML = '';
+                [...data.backlog].reverse().forEach((t, i) => {
+                    const index = data.backlog.length - 1 - i;
+                    const isError = t.status === 'error';
+                    const synthesis = t.synthesis || t.result || '';
+
+                    let debateHTML = '';
+                    if (t.log && t.log.length > 0) {
+                        debateHTML = `<table>
+                            <tr><th>Agente</th><th>Ruolo</th><th>Proposta</th><th>Rischi</th><th>Lacune</th></tr>`;
+                        t.log.forEach(entry => {
+                            const agentClass = 'agent-' + (entry.agent === 'ChatGPT' ? 'gpt' : entry.agent === 'Claude' ? 'claude' : 'gemini');
+                            const roleClass = 'role-' + (entry.role || 'Other');
+                            debateHTML += `<tr>
+                                <td class="${agentClass}">${entry.agent}</td>
+                                <td class="${roleClass}">${entry.role}</td>
+                                <td>${entry.proposal || ''}</td>
+                                <td>${(entry.risks || []).join('<br>')}</td>
+                                <td>${(entry.gaps || []).join('<br>')}</td>
+                            </tr>`;
+                        });
+                        debateHTML += '</table>';
+                    }
+
+                    list.innerHTML += `
+                        <div class="task-card ${isError ? 'error' : ''}">
+                            <div class="task-header">
+                                <div class="task-title">${t.task}</div>
+                                <div class="task-meta">${t.timestamp}<br>${t.execution_time}s</div>
+                            </div>
+                            <span class="badge ${isError ? 'badge-error' : 'badge-done'}">${isError ? '✗ Errore' : '✓ Completato'}</span>
+                            ${synthesis ? `
+                            <div class="synthesis-box">
+                                <div class="synthesis-label">💡 Sintesi Helyas</div>
+                                ${synthesis}
+                            </div>` : ''}
+                            ${debateHTML ? `
+                            <button class="toggle-btn" onclick="toggleDebate(${index})">📋 Vedi dibattito completo</button>
+                            <div class="debate-box" id="debate-${index}">${debateHTML}</div>` : ''}
+                        </div>
                     `;
-                    tableBody.innerHTML += row;
                 });
             }
 
-            async function toggleLog(index) {
-                const logBox = document.getElementById('log-' + index);
-                if (logBox.style.display === "none" || logBox.style.display === "") {
-                    const response = await fetch('/backlog/list');
-                    const data = await response.json();
-                    const task = data.backlog[index];
-                    if (task.log && task.log.length > 0) {
-                        let html = "<table class='log-table'><tr><th>Agente</th><th>Ruolo</th><th>Proposta</th><th>Rischi</th><th>Lacune</th></tr>";
-                        task.log.forEach(entry => {
-                            const roleClass = "role-" + (entry.role || "Other");
-                            html += `<tr>
-                                <td>${entry.agent}</td>
-                                <td class='${roleClass}'>${entry.role}</td>
-                                <td>${entry.proposal}</td>
-                                <td>${entry.risks ? entry.risks.join(", ") : ""}</td>
-                                <td>${entry.gaps ? entry.gaps.join(", ") : ""}</td>
-                            </tr>`;
-                        });
-                        html += "</table>";
-                        logBox.innerHTML = html;
-                    } else {
-                        logBox.innerText = "Nessun log dettagliato disponibile.";
-                    }
-                    logBox.style.display = "block";
-                } else {
-                    logBox.style.display = "none";
-                }
+            function toggleDebate(index) {
+                const box = document.getElementById('debate-' + index);
+                box.style.display = box.style.display === 'block' ? 'none' : 'block';
             }
 
-            window.onload = loadTasks;
+            // Listener tasto Enter
+            document.addEventListener('DOMContentLoaded', () => {
+                document.getElementById('taskInput').addEventListener('keypress', e => {
+                    if (e.key === 'Enter') addTask();
+                });
+                loadTasks();
+            });
         </script>
-    </head>
-    <body>
-        <h2>📊 Helyas – Dashboard</h2>
-        <div class="controls">
-            <input type="text" id="taskInput" placeholder="Scrivi un nuovo task..."/>
-            <button onclick="addTask()">Aggiungi Task</button>
-            <button onclick="loadTasks()">Aggiorna</button>
-        </div>
-        <table>
-            <tr>
-                <th>Task</th>
-                <th>Status</th>
-                <th>Result</th>
-                <th>Timestamp</th>
-                <th>Execution Time (s)</th>
-                <th>Dettagli</th>
-            </tr>
-            <tbody id="taskTableBody">
-            </tbody>
-        </table>
     </body>
     </html>
     """
-    return render_template_string(html_template, backlog=backlog)
+    return render_template_string(html_template)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
