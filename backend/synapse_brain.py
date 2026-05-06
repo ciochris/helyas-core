@@ -155,156 +155,43 @@ def dashboard():
         <style>
             * { box-sizing: border-box; margin: 0; padding: 0; }
             body { font-family: 'Segoe UI', Arial, sans-serif; background: #f0f2f5; color: #222; }
-
-            header {
-                background: linear-gradient(135deg, #1a1a2e, #16213e);
-                color: white;
-                padding: 20px 30px;
-                display: flex;
-                align-items: center;
-                gap: 12px;
-            }
+            header { background: linear-gradient(135deg, #1a1a2e, #16213e); color: white; padding: 20px 30px; display: flex; align-items: center; gap: 12px; }
             header h1 { font-size: 1.6rem; font-weight: 600; }
             header span { font-size: 1.8rem; }
-
             .container { max-width: 1100px; margin: 30px auto; padding: 0 20px; }
-
-            .input-box {
-                background: white;
-                border-radius: 12px;
-                padding: 20px;
-                box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-                margin-bottom: 24px;
-                display: flex;
-                gap: 10px;
-                align-items: center;
-            }
-            .input-box input {
-                flex: 1;
-                padding: 10px 14px;
-                border: 1px solid #ddd;
-                border-radius: 8px;
-                font-size: 15px;
-            }
-            .input-box select {
-                padding: 10px 12px;
-                border: 1px solid #ddd;
-                border-radius: 8px;
-                font-size: 14px;
-                background: white;
-            }
-            .btn {
-                padding: 10px 20px;
-                border: none;
-                border-radius: 8px;
-                cursor: pointer;
-                font-size: 14px;
-                font-weight: 600;
-            }
+            .input-box { background: white; border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 24px; display: flex; gap: 10px; align-items: center; }
+            .input-box input { flex: 1; padding: 10px 14px; border: 1px solid #ddd; border-radius: 8px; font-size: 15px; }
+            .input-box select { padding: 10px 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; background: white; }
+            .btn { padding: 10px 20px; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600; }
             .btn-primary { background: #4f46e5; color: white; }
             .btn-primary:hover { background: #4338ca; }
             .btn-secondary { background: #e5e7eb; color: #374151; }
             .btn-secondary:hover { background: #d1d5db; }
-
-            .loading {
-                display: none;
-                text-align: center;
-                padding: 20px;
-                color: #6b7280;
-                font-style: italic;
-            }
-
-            .task-card {
-                background: white;
-                border-radius: 12px;
-                padding: 20px;
-                margin-bottom: 16px;
-                box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-                border-left: 4px solid #4f46e5;
-            }
+            .loading { display: none; text-align: center; padding: 20px; color: #6b7280; font-style: italic; }
+            .task-card { background: white; border-radius: 12px; padding: 20px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-left: 4px solid #4f46e5; }
             .task-card.error { border-left-color: #ef4444; }
-
-            .task-header {
-                display: flex;
-                justify-content: space-between;
-                align-items: flex-start;
-                margin-bottom: 12px;
-            }
+            .task-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
             .task-title { font-weight: 700; font-size: 1rem; color: #1f2937; flex: 1; }
             .task-meta { font-size: 12px; color: #9ca3af; text-align: right; margin-left: 10px; }
-
-            .badge {
-                display: inline-block;
-                padding: 2px 10px;
-                border-radius: 20px;
-                font-size: 12px;
-                font-weight: 600;
-                margin-bottom: 8px;
-            }
+            .badge { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; margin-bottom: 8px; }
             .badge-done { background: #d1fae5; color: #065f46; }
             .badge-error { background: #fee2e2; color: #991b1b; }
-
-            .synthesis-box {
-                background: #f0fdf4;
-                border: 1px solid #bbf7d0;
-                border-radius: 8px;
-                padding: 14px;
-                margin-bottom: 12px;
-                font-size: 14px;
-                line-height: 1.6;
-            }
-            .synthesis-label {
-                font-size: 11px;
-                font-weight: 700;
-                text-transform: uppercase;
-                color: #059669;
-                margin-bottom: 6px;
-            }
-
-            .toggle-btn {
-                background: none;
-                border: 1px solid #e5e7eb;
-                border-radius: 6px;
-                padding: 6px 12px;
-                font-size: 13px;
-                cursor: pointer;
-                color: #6b7280;
-            }
+            .synthesis-box { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 14px; margin-bottom: 12px; font-size: 14px; line-height: 1.6; }
+            .synthesis-label { font-size: 11px; font-weight: 700; text-transform: uppercase; color: #059669; margin-bottom: 6px; }
+            .toggle-btn { background: none; border: 1px solid #e5e7eb; border-radius: 6px; padding: 6px 12px; font-size: 13px; cursor: pointer; color: #6b7280; }
             .toggle-btn:hover { background: #f9fafb; }
-
-            .debate-box {
-                display: none;
-                margin-top: 14px;
-            }
-            .debate-box table {
-                width: 100%;
-                border-collapse: collapse;
-                font-size: 13px;
-            }
-            .debate-box th {
-                background: #f3f4f6;
-                padding: 8px 10px;
-                text-align: left;
-                font-weight: 600;
-                color: #374151;
-                border-bottom: 2px solid #e5e7eb;
-            }
-            .debate-box td {
-                padding: 8px 10px;
-                border-bottom: 1px solid #f3f4f6;
-                vertical-align: top;
-            }
+            .debate-box { display: none; margin-top: 14px; }
+            .debate-box table { width: 100%; border-collapse: collapse; font-size: 13px; }
+            .debate-box th { background: #f3f4f6; padding: 8px 10px; text-align: left; font-weight: 600; color: #374151; border-bottom: 2px solid #e5e7eb; }
+            .debate-box td { padding: 8px 10px; border-bottom: 1px solid #f3f4f6; vertical-align: top; }
             .debate-box tr:last-child td { border-bottom: none; }
-
             .role-Analyst { color: #2563eb; font-weight: 700; }
             .role-Planner { color: #16a34a; font-weight: 700; }
             .role-Builder { color: #d97706; font-weight: 700; }
             .role-Critic  { color: #dc2626; font-weight: 700; }
-
             .agent-gpt { color: #10a37f; font-weight: 600; }
             .agent-claude { color: #c17f24; font-weight: 600; }
             .agent-gemini { color: #4285f4; font-weight: 600; }
-
             .empty { text-align: center; color: #9ca3af; padding: 40px; font-size: 15px; }
         </style>
     </head>
@@ -313,7 +200,6 @@ def dashboard():
             <span>🧠</span>
             <h1>Helyas – Round Table AI</h1>
         </header>
-
         <div class="container">
             <div class="input-box">
                 <input type="text" id="taskInput" placeholder="Scrivi un task per Helyas..." />
@@ -327,30 +213,30 @@ def dashboard():
                 <button class="btn btn-primary" onclick="addTask()">▶ Avvia</button>
                 <button class="btn btn-secondary" onclick="loadTasks()">↻ Aggiorna</button>
             </div>
-
-            <div class="loading" id="loading">
-                ⏳ Helyas sta elaborando... potrebbe richiedere 1-3 minuti.
-            </div>
-
+            <div class="loading" id="loading">⏳ Helyas sta elaborando... potrebbe richiedere 1-3 minuti.</div>
             <div id="taskList"></div>
         </div>
-
         <script>
+            function markdownToHtml(text) {
+                if (!text) return '';
+                return text
+                    .replace(/\\*\\*(.*?)\\*\\*/g, '<strong>$1</strong>')
+                    .replace(/\\n/g, '<br>');
+            }
+
             async function addTask() {
                 const task = document.getElementById('taskInput').value.trim();
                 const rounds = document.getElementById('roundsSelect').value;
                 if (!task) { alert("Inserisci un task!"); return; }
-
                 document.getElementById('loading').style.display = 'block';
                 document.querySelector('.btn-primary').disabled = true;
-
                 try {
                     const response = await fetch('/backlog/add', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ task: task, max_rounds: parseInt(rounds) })
                     });
-                    const result = await response.json();
+                    await response.json();
                     document.getElementById('taskInput').value = '';
                     loadTasks();
                 } catch(e) {
@@ -365,53 +251,40 @@ def dashboard():
                 const response = await fetch('/backlog/list');
                 const data = await response.json();
                 const list = document.getElementById('taskList');
-
                 if (!data.backlog || data.backlog.length === 0) {
                     list.innerHTML = '<div class="empty">Nessun task ancora. Scrivi qualcosa sopra per iniziare.</div>';
                     return;
                 }
-
                 list.innerHTML = '';
                 [...data.backlog].reverse().forEach((t, i) => {
                     const index = data.backlog.length - 1 - i;
                     const isError = t.status === 'error';
                     const synthesis = t.synthesis || t.result || '';
-
                     let debateHTML = '';
                     if (t.log && t.log.length > 0) {
-                        debateHTML = `<table>
-                            <tr><th>Agente</th><th>Ruolo</th><th>Proposta</th><th>Rischi</th><th>Lacune</th></tr>`;
+                        debateHTML = '<table><tr><th>Agente</th><th>Ruolo</th><th>Proposta</th><th>Rischi</th><th>Lacune</th></tr>';
                         t.log.forEach(entry => {
                             const agentClass = 'agent-' + (entry.agent === 'ChatGPT' ? 'gpt' : entry.agent === 'Claude' ? 'claude' : 'gemini');
                             const roleClass = 'role-' + (entry.role || 'Other');
-                            debateHTML += `<tr>
-                                <td class="${agentClass}">${entry.agent}</td>
-                                <td class="${roleClass}">${entry.role}</td>
-                                <td>${entry.proposal || ''}</td>
-                                <td>${(entry.risks || []).join('<br>')}</td>
-                                <td>${(entry.gaps || []).join('<br>')}</td>
-                            </tr>`;
+                            debateHTML += '<tr>' +
+                                '<td class="' + agentClass + '">' + entry.agent + '</td>' +
+                                '<td class="' + roleClass + '">' + entry.role + '</td>' +
+                                '<td>' + markdownToHtml(entry.proposal || '') + '</td>' +
+                                '<td>' + (entry.risks || []).join('<br>') + '</td>' +
+                                '<td>' + (entry.gaps || []).join('<br>') + '</td>' +
+                                '</tr>';
                         });
                         debateHTML += '</table>';
                     }
-
-                    list.innerHTML += `
-                        <div class="task-card ${isError ? 'error' : ''}">
-                            <div class="task-header">
-                                <div class="task-title">${t.task}</div>
-                                <div class="task-meta">${t.timestamp}<br>${t.execution_time}s</div>
-                            </div>
-                            <span class="badge ${isError ? 'badge-error' : 'badge-done'}">${isError ? '✗ Errore' : '✓ Completato'}</span>
-                            ${synthesis ? `
-                            <div class="synthesis-box">
-                                <div class="synthesis-label">💡 Sintesi Helyas</div>
-                                ${synthesis}
-                            </div>` : ''}
-                            ${debateHTML ? `
-                            <button class="toggle-btn" onclick="toggleDebate(${index})">📋 Vedi dibattito completo</button>
-                            <div class="debate-box" id="debate-${index}">${debateHTML}</div>` : ''}
-                        </div>
-                    `;
+                    list.innerHTML += '<div class="task-card ' + (isError ? 'error' : '') + '">' +
+                        '<div class="task-header">' +
+                            '<div class="task-title">' + t.task + '</div>' +
+                            '<div class="task-meta">' + t.timestamp + '<br>' + t.execution_time + 's</div>' +
+                        '</div>' +
+                        '<span class="badge ' + (isError ? 'badge-error' : 'badge-done') + '">' + (isError ? '✗ Errore' : '✓ Completato') + '</span>' +
+                        (synthesis ? '<div class="synthesis-box"><div class="synthesis-label">💡 Sintesi Helyas</div>' + markdownToHtml(synthesis) + '</div>' : '') +
+                        (debateHTML ? '<button class="toggle-btn" onclick="toggleDebate(' + index + ')">📋 Vedi dibattito completo</button><div class="debate-box" id="debate-' + index + '">' + debateHTML + '</div>' : '') +
+                        '</div>';
                 });
             }
 
@@ -420,7 +293,6 @@ def dashboard():
                 box.style.display = box.style.display === 'block' ? 'none' : 'block';
             }
 
-            // Listener tasto Enter
             document.addEventListener('DOMContentLoaded', () => {
                 document.getElementById('taskInput').addEventListener('keypress', e => {
                     if (e.key === 'Enter') addTask();
