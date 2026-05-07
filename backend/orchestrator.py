@@ -130,9 +130,7 @@ def parse_response(text: str) -> dict:
                 gaps.append(item)
         elif current == "proposal":
             clean = line.replace("**", "").strip()
-            # Smette di accumulare se inizia una nuova sezione numerata
-            if clean and not clean[0].isdigit():
-                proposal += " " + clean
+            proposal += " " + clean
 
     # Pulizia finale della proposta
     proposal = proposal.strip()
