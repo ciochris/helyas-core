@@ -655,10 +655,22 @@ function toggleDebate(id) {
 }
 
 async function sendMessage() {
-    if (!currentSessionId) return;
     const input = document.getElementById('chatInput');
     const message = input.value.trim();
     if (!message) return;
+    // Se non c'è una sessione aperta, la crea automaticamente
+    if (!currentSessionId) {
+        const res = await fetch('/sessions', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ title: 'Nuova sessione' })
+        });
+        const s = await res.json();
+        currentSessionId = s.id;
+        document.getElementById('sessionTitle').textContent = s.title;
+        document.getElementById('sessionTitle').classList.remove('placeholder');
+        loadSessions();
+    }
 
     const rounds = parseInt(document.getElementById('roundsSelect').value);
 
