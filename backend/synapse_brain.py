@@ -114,6 +114,36 @@ def create_session():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route("/sessions/<session_id>", methods=["DELETE"])
+def delete_session(session_id):
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM sessions WHERE id = %s", (session_id,))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return jsonify({"status": "deleted"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/sessions/<session_id>", methods=["PATCH"])
+def rename_session(session_id):
+    try:
+        data = request.get_json(force=True)
+        title = data.get("title", "").strip()
+        if not title:
+            return jsonify({"error": "Titolo vuoto"}), 400
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("UPDATE sessions SET title = %s WHERE id = %s", (title, session_id))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return jsonify({"status": "renamed", "title": title})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/sessions/<session_id>/messages", methods=["GET"])
 def get_messages(session_id):
     try:
@@ -164,11 +194,19 @@ def chat(session_id):
                 "content": row["synthesis"] or row["content"]
             })
 
-        # Aggiorna titolo sessione al primo messaggio utente
+        # Aggiorna titolo sessione al primo messaggio utente con titolo intelligente
         cur.execute("SELECT COUNT(*) as cnt FROM messages WHERE session_id = %s AND role = 'user'", (session_id,))
         count = cur.fetchone()["cnt"]
         if count == 1:
-            title = user_message[:50] + ("..." if len(user_message) > 50 else "")
+            try:
+                from backend.orchestrator import call_openai
+                smart_title = call_openai(
+                    f"Genera un titolo breve (massimo 5 parole, in italiano) per una conversazione che inizia con: '{user_message[:200]}'. "
+                    f"Rispondi SOLO con il titolo, senza virgolette o punteggiatura finale."
+                )
+                title = smart_title.strip()[:60] if smart_title and "ERROR" not in smart_title else user_message[:50]
+            except Exception:
+                title = user_message[:50]
             cur.execute("UPDATE sessions SET title = %s WHERE id = %s", (title, session_id))
 
         conn.commit()
@@ -348,6 +386,13 @@ def dashboard():
         .session-item:hover { background: var(--surface2); color: var(--text); }
         .session-item.active { background: var(--surface2); color: var(--text); border-color: var(--border); }
         .session-date { font-size: 10px; color: var(--muted); margin-top: 2px; font-family: var(--mono); }
+        .session-row { cursor: pointer; flex: 1; }
+        .session-name { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .session-actions { display: none; gap: 4px; margin-top: 4px; }
+        .session-item:hover .session-actions { display: flex; }
+        .action-btn { background: none; border: 1px solid var(--border); border-radius: 4px; color: var(--muted); font-size: 11px; padding: 2px 6px; cursor: pointer; }
+        .action-btn:hover { background: var(--surface2); color: var(--text); }
+        .action-btn.danger:hover { border-color: var(--red); color: var(--red); }
 
         /* Main */
         .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
@@ -539,10 +584,48 @@ async function loadSessions() {
         (data.sessions || []).forEach(s => {
             const div = document.createElement('div');
             div.className = 'session-item' + (s.id === currentSessionId ? ' active' : '');
-            div.innerHTML = `<div>${s.title || 'Sessione'}</div><div class="session-date">${formatDate(s.updated_at)}</div>`;
-            div.onclick = () => openSession(s.id, s.title);
+            div.innerHTML = `
+                <div class="session-row" onclick="openSession('${s.id}', '${(s.title||'Sessione').replace(/'/g,"\\'")}')">
+                    <div class="session-name">${s.title || 'Sessione'}</div>
+                    <div class="session-date">${formatDate(s.updated_at)}</div>
+                </div>
+                <div class="session-actions">
+                    <button class="action-btn" title="Rinomina" onclick="event.stopPropagation(); renameSession('${s.id}', '${(s.title||'Sessione').replace(/'/g,"\\'")}')">✏️</button>
+                    <button class="action-btn danger" title="Elimina" onclick="event.stopPropagation(); deleteSession('${s.id}')">🗑️</button>
+                </div>`;
             list.appendChild(div);
         });
+    } catch(e) { console.error(e); }
+}
+
+async function renameSession(sessionId, currentTitle) {
+    const newTitle = prompt('Nuovo nome sessione:', currentTitle);
+    if (!newTitle || newTitle === currentTitle) return;
+    try {
+        await fetch(`/sessions/${sessionId}`, {
+            method: 'PATCH',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ title: newTitle })
+        });
+        if (currentSessionId === sessionId) {
+            document.getElementById('sessionTitle').textContent = newTitle;
+        }
+        loadSessions();
+    } catch(e) { console.error(e); }
+}
+
+async function deleteSession(sessionId) {
+    if (!confirm('Eliminare questa sessione? Non sarà recuperabile.')) return;
+    try {
+        await fetch(`/sessions/${sessionId}`, { method: 'DELETE' });
+        if (currentSessionId === sessionId) {
+            currentSessionId = null;
+            document.getElementById('sessionTitle').textContent = 'Seleziona o crea una sessione';
+            document.getElementById('sessionTitle').classList.add('placeholder');
+            document.getElementById('sendBtn').disabled = true;
+            document.getElementById('chatArea').innerHTML = '';
+        }
+        loadSessions();
     } catch(e) { console.error(e); }
 }
 
