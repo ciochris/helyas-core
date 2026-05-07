@@ -62,10 +62,10 @@ def call_gemini(prompt: str) -> str:
 
 def build_prompt(agent_name: str, role: str, task: str, context: list = None, session_context: list = None) -> str:
     role_instructions = {
-        "Analyst":  "Analizza il problema in modo critico. Identifica i punti chiave, rischi principali e lacune informative. Sii conciso (max 150 parole).",
-        "Planner":  "Proponi un piano d'azione strutturato per risolvere il problema. Elenca i passi principali. Sii conciso (max 150 parole).",
-        "Builder":  "Proponi una soluzione concreta e implementabile. Concentrati su cosa fare praticamente. Sii conciso (max 150 parole).",
-        "Critic":   "Critica costruttivamente le soluzioni proposte. Identifica debolezze, rischi non considerati e suggerisci miglioramenti. Sii conciso (max 150 parole)."
+        "Analyst":  "Analizza il problema in modo critico. Identifica i punti chiave, rischi principali e lacune informative.",
+        "Planner":  "Proponi un piano d'azione strutturato per risolvere il problema. Elenca i passi principali.",
+        "Builder":  "Proponi una soluzione concreta e implementabile. Concentrati su cosa fare praticamente.",
+        "Critic":   "Critica costruttivamente le soluzioni proposte. Identifica debolezze, rischi non considerati e suggerisci miglioramenti."
     }
 
     # Contesto della sessione (storico conversazione)
