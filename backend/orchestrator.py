@@ -108,23 +108,43 @@ def parse_response(text: str) -> dict:
         line = line.strip()
         if not line:
             continue
-        if "PROPOSTA:" in line.upper():
+
+        line_upper = line.upper()
+
+        # Riconosce "1. PROPOSTA:", "PROPOSTA:", "**PROPOSTA:**" ecc.
+        if "PROPOSTA" in line_upper and ":" in line:
             current = "proposal"
-            proposal = line.split(":", 1)[-1].strip()
-        elif "RISCHI:" in line.upper():
+            after_colon = line.split(":", 1)[-1].strip()
+            # Rimuove eventuali ** residui del markdown
+            after_colon = after_colon.replace("**", "").strip()
+            proposal = after_colon
+        elif "RISCHI" in line_upper and ":" in line:
             current = "risks"
-        elif "LACUNE:" in line.upper():
+        elif "LACUNE" in line_upper and ":" in line:
             current = "gaps"
         elif line.startswith("-"):
+            item = line[1:].strip().replace("**", "")
             if current == "risks":
-                risks.append(line[1:].strip())
+                risks.append(item)
             elif current == "gaps":
-                gaps.append(line[1:].strip())
-        elif current == "proposal" and proposal:
-            proposal += " " + line
+                gaps.append(item)
+        elif current == "proposal":
+            clean = line.replace("**", "").strip()
+            # Smette di accumulare se inizia una nuova sezione numerata
+            if clean and not clean[0].isdigit():
+                proposal += " " + clean
 
+    # Pulizia finale della proposta
+    proposal = proposal.strip()
+
+    # Se non ha trovato nulla di strutturato, usa il testo grezzo pulito
     if not proposal:
-        proposal = text[:300]
+        # Rimuove righe che sembrano intestazioni di sezione
+        lines = [l.strip() for l in text.splitlines() if l.strip()
+                 and "PROPOSTA" not in l.upper()
+                 and "RISCHI" not in l.upper()
+                 and "LACUNE" not in l.upper()]
+        proposal = " ".join(lines)[:400].replace("**", "").strip()
 
     return {"proposal": proposal, "risks": risks, "gaps": gaps}
 
@@ -204,9 +224,13 @@ def round_table(task: str, max_rounds: int = 2, session_context: list = None) ->
         if latest and is_consensus(latest):
             consensus_reached = True
 
-    # Sintesi finale
-    final_proposals = [log["proposal"] for log in history if log["role"] == "Builder"]
-    synthesis = " | ".join(final_proposals[:3]) if final_proposals else "Nessuna proposta raccolta."
+    # Sintesi finale — usa la proposta Builder più completa
+    builder_logs = [log for log in history if log["role"] == "Builder"]
+    if builder_logs:
+        best = max(builder_logs, key=lambda x: len(x.get("proposal", "")))
+        synthesis = best["proposal"]
+    else:
+        synthesis = "Nessuna proposta raccolta."
 
     final_summary = {
         "summary": f"Sintesi dopo {round_count} round - consenso={'sì' if consensus_reached else 'no'}",
