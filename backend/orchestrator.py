@@ -1,6 +1,7 @@
 import os
 import json
 import difflib
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Configurazione provider ──────────────────────────────────────────────────
 ENABLE_GPT    = os.getenv("ENABLE_GPT",    "true").lower() == "true"
@@ -207,12 +208,26 @@ def round_table(task: str, max_rounds: int = 2, session_context: list = None) ->
     while round_count < max_rounds and not consensus_reached:
         round_count += 1
         round_logs = []
+        context = history[-len(agents):] if history else None
 
-        for agent in agents:
-            context = history[-len(agents):] if history else None
-            for role in roles:
-                entry = ask_ai(agent, role, task, context, session_context)
-                round_logs.append(entry)
+        # Chiamate parallele: tutti gli agenti e ruoli contemporaneamente
+        tasks = [(agent, role) for agent in agents for role in roles]
+        with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
+            futures = {
+                executor.submit(ask_ai, agent, role, task, context, session_context): (agent, role)
+                for agent, role in tasks
+            }
+            for future in as_completed(futures):
+                try:
+                    entry = future.result(timeout=30)
+                    round_logs.append(entry)
+                except Exception as e:
+                    agent, role = futures[future]
+                    round_logs.append({
+                        "agent": agent, "role": role,
+                        "proposal": f"[Timeout] {agent} non ha risposto in tempo.",
+                        "risks": [], "gaps": [], "raw": "", "artifacts": []
+                    })
 
         history.extend(round_logs)
 
