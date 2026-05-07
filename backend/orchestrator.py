@@ -24,7 +24,7 @@ def call_openai(prompt: str) -> str:
         response = client.chat.completions.create(
             model=OPENAI_MODEL,
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=500,
+            max_tokens=800,
             temperature=0.7
         )
         return response.choices[0].message.content.strip()
@@ -38,7 +38,7 @@ def call_claude(prompt: str) -> str:
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         response = client.messages.create(
             model=CLAUDE_MODEL,
-            max_tokens=500,
+            max_tokens=800,
             messages=[{"role": "user", "content": prompt}]
         )
         return response.content[0].text.strip()
