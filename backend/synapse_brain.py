@@ -19,15 +19,15 @@ def clean_markdown(text):
     if not text:
         return text
     import re
-    # Titoli
-    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+    # Titoli - rimuove # all inizio riga (con o senza spazio dopo)
+    text = re.sub(r'^#+\s*', '', text, flags=re.MULTILINE)
     # Grassetto e corsivo
-    text = re.sub(r'\*{3}(.+?)\*{3}', r'', text)
-    text = re.sub(r'\*{2}(.+?)\*{2}', r'', text)
-    text = re.sub(r'\*(.+?)\*', r'', text)
-    # Separatori
-    text = re.sub(r'^---+$', '─────────────────', text, flags=re.MULTILINE)
-    # Rimuove spazi multipli
+    text = re.sub(r'\*{3}(.+?)\*{3}', r'', text, flags=re.DOTALL)
+    text = re.sub(r'\*{2}(.+?)\*{2}', r'', text, flags=re.DOTALL)
+    text = re.sub(r'\*(.+?)\*', r'', text, flags=re.DOTALL)
+    # Separatori --- diventano una linea leggibile
+    text = re.sub(r'^---+$', '', text, flags=re.MULTILINE)
+    # Rimuove righe vuote multiple
     text = re.sub(r'
 {3,}', '
 
