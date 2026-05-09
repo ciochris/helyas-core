@@ -14,6 +14,26 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 # ── Database ─────────────────────────────────────────────────────────────────
 
+def clean_markdown(text):
+    """Converte markdown in testo pulito per la visualizzazione."""
+    if not text:
+        return text
+    import re
+    # Titoli
+    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+    # Grassetto e corsivo
+    text = re.sub(r'\*{3}(.+?)\*{3}', r'', text)
+    text = re.sub(r'\*{2}(.+?)\*{2}', r'', text)
+    text = re.sub(r'\*(.+?)\*', r'', text)
+    # Separatori
+    text = re.sub(r'^---+$', '─────────────────', text, flags=re.MULTILINE)
+    # Rimuove spazi multipli
+    text = re.sub(r'
+{3,}', '
+
+', text)
+    return text.strip()
+
 def get_db():
     return psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor)
 
@@ -220,11 +240,14 @@ def chat(session_id):
         synthesis = decision.get("synthesis", "")
         log = decision.get("log", [])
 
+        # Pulisce markdown dalla sintesi prima di salvare
+        synthesis_clean = clean_markdown(synthesis)
+
         # Salva risposta assistant
         cur.execute(
             """INSERT INTO messages (session_id, role, content, synthesis, log, execution_time)
                VALUES (%s, %s, %s, %s, %s, %s) RETURNING *""",
-            (session_id, "assistant", clean_result(result), synthesis, json.dumps(log), execution_time)
+            (session_id, "assistant", clean_result(result), synthesis_clean, json.dumps(log), execution_time)
         )
         msg = dict(cur.fetchone())
 
