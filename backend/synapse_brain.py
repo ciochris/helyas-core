@@ -564,8 +564,27 @@ let debateCounter = 0;
 function markdownToHtml(text) {
     if (!text) return '';
     return text
-        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-        .replace(/\n/g, '<br>');
+        // Titoli ### ## #
+        .replace(/^### (.+)$/gm, '<h4 style="margin:12px 0 4px;font-size:15px;color:var(--text)"></h4>')
+        .replace(/^## (.+)$/gm, '<h3 style="margin:14px 0 6px;font-size:16px;color:var(--text)"></h3>')
+        .replace(/^# (.+)$/gm, '<h2 style="margin:16px 0 8px;font-size:18px;color:var(--text)"></h2>')
+        // Grassetto e corsivo
+        .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em></em></strong>')
+        .replace(/\*\*(.+?)\*\*/g, '<strong></strong>')
+        .replace(/\*(.+?)\*/g, '<em></em>')
+        // Liste con trattino
+        .replace(/^- (.+)$/gm, '<li style="margin:3px 0;padding-left:4px"></li>')
+        // Separatori
+        .replace(/^---+$/gm, '<hr style="border:none;border-top:1px solid var(--border);margin:12px 0">')
+        // Wrap liste consecutive in ul
+        .replace(/(<li[^>]*>.*<\/li>
+?)+/g, (match) => '<ul style="margin:8px 0;padding-left:20px;list-style:disc">' + match + '</ul>')
+        // A capo
+        .replace(/
+
+/g, '<br><br>')
+        .replace(/
+/g, '<br>');
 }
 
 function formatDate(ts) {
