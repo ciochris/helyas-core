@@ -237,11 +237,11 @@ def round_table(task: str, max_rounds: int = 2, session_context: list = None) ->
         if latest and is_consensus(latest):
             consensus_reached = True
 
-    # Sintesi finale — usa la proposta Builder più completa
+    # Sintesi finale — usa il testo grezzo del Builder più completo
     builder_logs = [log for log in history if log["role"] == "Builder"]
     if builder_logs:
-        best = max(builder_logs, key=lambda x: len(x.get("proposal", "")))
-        synthesis = best["proposal"]
+        best = max(builder_logs, key=lambda x: len(x.get("raw", "") or x.get("proposal", "")))
+        synthesis = (best.get("raw") or best.get("proposal", "Nessuna proposta raccolta.")).strip()
     else:
         synthesis = "Nessuna proposta raccolta."
 
