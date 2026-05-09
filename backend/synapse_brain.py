@@ -832,7 +832,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
 # ── Avvio ─────────────────────────────────────────────────────────────────────
 
-init_db()
+# Lazy init - eseguito al primo request invece che all'avvio
+_db_initialized = False
+
+@app.before_request
+def lazy_init_db():
+    global _db_initialized
+    if not _db_initialized:
+        try:
+            init_db()
+            _db_initialized = True
+        except Exception as e:
+            print(f"[DB INIT WARNING] {e}")
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
