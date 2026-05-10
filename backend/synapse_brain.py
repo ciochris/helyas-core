@@ -51,6 +51,59 @@ Email: info@soluzionecasatrieste.it
 P.IVA: 01352380321
 Settore: Edilizia e ristrutturazioni, specializzazione bagni e impianti di climatizzazione
 """
+from flask import Flask, request, jsonify, render_template_string
+from backend.orchestrator import round_table
+import json
+import os
+import time
+import uuid
+import psycopg2
+import psycopg2.extras
+from datetime import datetime
+
+app = Flask(__name__)
+
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+
+# ── Database ─────────────────────────────────────────────────────────────────
+
+def clean_markdown(text):
+    """Rimuove simboli markdown dal testo."""
+    if not text:
+        return text
+    lines = text.split('\n')
+    cleaned = []
+    for line in lines:
+        # Rimuove # all inizio riga (titoli markdown)
+        while line.startswith('#'):
+            line = line[1:]
+        line = line.lstrip()
+        # Rimuove ** grassetto
+        while '**' in line:
+            line = line.replace('**', '', 2)
+        # Rimuove --- separatori
+        if line.strip().startswith('---'):
+            line = ''
+        cleaned.append(line)
+    result = '\n'.join(cleaned)
+    # Rimuove righe vuote multiple
+    while '\n\n\n' in result:
+        result = result.replace('\n\n\n', '\n\n')
+    return result.strip()
+
+def get_db():
+    return psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor)
+
+INITIAL_PROFILE = """PROFILO UTENTE:
+Nome: Christian Ciofi
+Azienda: Soluzione Casa Srls (in trasformazione in Srl)
+Ruolo: Amministratore Unico
+Sede: Via San Lazzaro 16, 34122 Trieste
+Telefono: 3336263840
+Email: info@soluzionecasatrieste.it
+P.IVA: 01352380321
+Settore: Edilizia e ristrutturazioni, specializzazione bagni e impianti di climatizzazione
+"""
 
 def init_db():
     """Crea le tabelle se non esistono."""
@@ -102,6 +155,13 @@ def init_db():
                 updated_at TIMESTAMP DEFAULT NOW()
             )
         """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS global_memory (
+                id INTEGER PRIMARY KEY DEFAULT 1,
+                content TEXT NOT NULL DEFAULT '',
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
         cur.execute("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS project_id TEXT")
         cur.execute("""
             INSERT INTO user_profile (id, content)
@@ -141,6 +201,57 @@ def get_project_memory(project_id):
     except Exception as e:
         print(f"[PROJECT MEMORY ERROR] {e}")
         return ""
+
+def get_global_memory():
+    """Recupera la memoria globale dell utente."""
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT content FROM global_memory WHERE id = 1")
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        return row["content"] if row else ""
+    except Exception as e:
+        print(f"[GLOBAL MEMORY ERROR] {e}")
+        return ""
+
+def update_global_memory_auto(session_synthesis, user_message):
+    """Aggiorna automaticamente la memoria globale dopo ogni sessione."""
+    try:
+        from backend.orchestrator import call_openai
+        current = get_global_memory()
+        profile = get_user_profile()
+        prompt = (
+            "Sei il sistema di memoria di Helyas, un assistente AI personale.\n\n"
+            "PROFILO BASE UTENTE:\n" + profile + "\n\n"
+            "MEMORIA GLOBALE ATTUALE (quello che hai imparato finora):\n" +
+            (current if current else "(nessuna memoria ancora)") + "\n\n"
+            "NUOVA CONVERSAZIONE:\n"
+            "Domanda utente: " + user_message[:300] + "\n"
+            "Risposta Helyas: " + session_synthesis[:500] + "\n\n"
+            "Aggiorna la memoria globale integrando le nuove informazioni rilevanti. "
+            "Includi: persone menzionate, decisioni prese, problemi emersi, preferenze, "
+            "contesto aziendale, progetti in corso. "
+            "NON includere dati statici gia nel profilo base (nome, P.IVA, sede). "
+            "Scrivi in modo denso e informativo. Massimo 1500 parole. "
+            "Solo il testo della memoria aggiornata, niente altro."
+        )
+        updated = call_openai(prompt)
+        if updated and "ERROR" not in updated:
+            conn = get_db()
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO global_memory (id, content, updated_at)
+                VALUES (1, %s, NOW())
+                ON CONFLICT (id) DO UPDATE SET content = %s, updated_at = NOW()
+            """, (updated, updated))
+            conn.commit()
+            cur.close()
+            conn.close()
+            print("[GLOBAL MEMORY] Aggiornata con successo")
+    except Exception as e:
+        print(f"[GLOBAL MEMORY UPDATE ERROR] {e}")
 
 def update_project_memory_auto(project_id, session_synthesis):
     if not project_id or not session_synthesis:
@@ -333,12 +444,20 @@ def chat(session_id):
 
         conn.commit()
 
-        # Recupera profilo utente e memoria progetto
+        # Recupera profilo utente, memoria globale e memoria progetto
         user_profile = get_user_profile()
+        global_memory = get_global_memory()
         cur.execute("SELECT project_id FROM sessions WHERE id = %s", (session_id,))
         session_row = cur.fetchone()
         project_id = session_row["project_id"] if session_row else None
         project_memory = get_project_memory(project_id) if project_id else ""
+
+        # Combina profilo + memoria globale + memoria progetto
+        full_context = user_profile
+        if global_memory:
+            full_context += "\n\nCOSA HO IMPARATO SU QUESTO UTENTE:\n" + global_memory
+        if project_memory:
+            full_context += "\n\nCONTESTO PROGETTO CORRENTE:\n" + project_memory
 
         # Esegui round table con contesto completo
         start_time = time.time()
@@ -346,8 +465,8 @@ def chat(session_id):
             user_message,
             max_rounds=max_rounds,
             session_context=session_context,
-            user_profile=user_profile,
-            project_memory=project_memory
+            user_profile=full_context,
+            project_memory=""
         )
         execution_time = round(time.time() - start_time, 3)
 
@@ -372,9 +491,15 @@ def chat(session_id):
         cur.close()
         conn.close()
 
-        # Aggiorna memoria progetto in background (non blocca la risposta)
+        # Aggiorna memoria globale e progetto in background
+        import threading
+        if synthesis_clean:
+            threading.Thread(
+                target=update_global_memory_auto,
+                args=(synthesis_clean, user_message),
+                daemon=True
+            ).start()
         if project_id and synthesis_clean:
-            import threading
             threading.Thread(
                 target=update_project_memory_auto,
                 args=(project_id, synthesis_clean),
