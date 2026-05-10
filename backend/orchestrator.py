@@ -58,6 +58,74 @@ def call_gemini(prompt: str) -> str:
         return f"[GEMINI ERROR] {e}"
 
 
+# ── Agente Interprete ────────────────────────────────────────────────────────
+
+def interpret_question(task: str, user_profile: str = "", session_context: list = None) -> dict:
+    """
+    Analizza la domanda e decide:
+    - Se è semplice: risponde direttamente senza Round Table
+    - Se è complessa: riscrive la domanda e decide se serve chiarimento
+    - Se mancano info: fa domande mirate prima di procedere
+    """
+    context_text = ""
+    if session_context and len(session_context) > 1:
+        recent = session_context[-4:]
+        lines = []
+        for msg in recent:
+            role_label = "Utente" if msg.get("role") == "user" else "Helyas"
+            c = (msg.get("content") or "")[:150]
+            lines.append(f"{role_label}: {c}")
+        context_text = "\nCONVERSAZIONE RECENTE:\n" + "\n".join(lines)
+
+    profile_text = ""
+    if user_profile:
+        profile_text = "\nCONTESTO UTENTE:\n" + user_profile[:500]
+
+    prompt = (
+        "Sei l'Interprete di Helyas. Analizza la domanda dell'utente e rispondi SOLO con un oggetto JSON valido.\n"
+        + profile_text
+        + context_text
+        + "\n\nDOMANDA UTENTE: " + task
+        + """\n\nDecidi il tipo di risposta necessaria:
+
+TIPO "direct": domanda semplice che non richiede analisi profonda.
+Esempi: saluti, domande fattuali semplici, richieste di informazioni base, conversazione generale, calcoli semplici, "che giorno e domani", "quanto fa 2+2", "come stai".
+
+TIPO "roundtable": domanda che richiede analisi, pianificazione, decisioni strategiche, confronto di opzioni, problemi complessi aziendali.
+Esempi: "come miglioro i miei margini", "come gestisco questo cliente", "dammi un piano per X", "analizza questa situazione".
+
+TIPO "clarify": domanda ambigua o incompleta dove servono informazioni essenziali prima di rispondere bene.
+Esempi: "aiutami con il cantiere" (quale?), "cosa faccio con questo problema" (quale problema?).
+
+Rispondi SOLO con JSON, nessun testo prima o dopo:
+{
+  "type": "direct" | "roundtable" | "clarify",
+  "rewritten": "versione migliorata e piu precisa della domanda (per roundtable)",
+  "direct_answer": "risposta diretta completa (solo per type=direct)",
+  "questions": ["domanda 1", "domanda 2"] 
+}
+
+Per type=direct: compila direct_answer con la risposta completa, lascia rewritten vuoto.
+Per type=roundtable: compila rewritten con domanda migliorata, lascia direct_answer vuoto, questions vuoto.
+Per type=clarify: compila questions (max 2), lascia direct_answer vuoto."""
+    )
+
+    try:
+        raw = call_openai(prompt)
+        # Pulisce il JSON da eventuali backtick
+        raw = raw.strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        raw = raw.strip()
+        result = json.loads(raw)
+        return result
+    except Exception as e:
+        # Fallback: vai al round table con la domanda originale
+        return {"type": "roundtable", "rewritten": task, "direct_answer": "", "questions": []}
+
+
 # ── Prompt per ogni ruolo ────────────────────────────────────────────────────
 
 def build_prompt(agent_name: str, role: str, task: str, context: list = None, session_context: list = None, user_profile: str = None, project_memory: str = None) -> str:
