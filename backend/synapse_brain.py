@@ -510,10 +510,12 @@ def chat(session_id):
             synthesis_clean = clean_markdown(synthesis)
 
         # Salva risposta assistant
+        # Per risposte dirette/chiarimento, content = synthesis_clean; per roundtable, usa clean_result
+        msg_content = synthesis_clean if response_type in ("direct", "clarify") else clean_result(result)
         cur.execute(
             """INSERT INTO messages (session_id, role, content, synthesis, log, execution_time)
                VALUES (%s, %s, %s, %s, %s, %s) RETURNING *""",
-            (session_id, "assistant", clean_result(result), synthesis_clean, json.dumps(log), execution_time)
+            (session_id, "assistant", msg_content, synthesis_clean, json.dumps(log), execution_time)
         )
         msg = dict(cur.fetchone())
 
