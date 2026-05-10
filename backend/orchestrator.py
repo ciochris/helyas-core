@@ -225,7 +225,7 @@ def round_table(task: str, max_rounds: int = 2, session_context: list = None, us
         tasks = [(agent, role) for agent in agents for role in roles]
         with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
             futures = {
-                executor.submit(ask_ai, agent, role, task, context, session_context): (agent, role)
+                executor.submit(ask_ai, agent, role, task, context, session_context, user_profile, project_memory): (agent, role)
                 for agent, role in tasks
             }
             for future in as_completed(futures):
