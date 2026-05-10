@@ -15,24 +15,28 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 # ── Database ─────────────────────────────────────────────────────────────────
 
 def clean_markdown(text):
-    """Converte markdown in testo pulito per la visualizzazione."""
+    """Rimuove simboli markdown dal testo."""
     if not text:
         return text
-    import re
-    # Titoli - rimuove # all inizio riga (con o senza spazio dopo)
-    text = re.sub(r'^#+\s*', '', text, flags=re.MULTILINE)
-    # Grassetto e corsivo
-    text = re.sub(r'\*{3}(.+?)\*{3}', r'', text, flags=re.DOTALL)
-    text = re.sub(r'\*{2}(.+?)\*{2}', r'', text, flags=re.DOTALL)
-    text = re.sub(r'\*(.+?)\*', r'', text, flags=re.DOTALL)
-    # Separatori --- diventano una linea leggibile
-    text = re.sub(r'^---+$', '', text, flags=re.MULTILINE)
+    lines = text.split('\n')
+    cleaned = []
+    for line in lines:
+        # Rimuove # all inizio riga (titoli markdown)
+        while line.startswith('#'):
+            line = line[1:]
+        line = line.lstrip()
+        # Rimuove ** grassetto
+        while '**' in line:
+            line = line.replace('**', '', 2)
+        # Rimuove --- separatori
+        if line.strip().startswith('---'):
+            line = ''
+        cleaned.append(line)
+    result = '\n'.join(cleaned)
     # Rimuove righe vuote multiple
-    text = re.sub(r'
-{3,}', '
-
-', text)
-    return text.strip()
+    while '\n\n\n' in result:
+        result = result.replace('\n\n\n', '\n\n')
+    return result.strip()
 
 def get_db():
     return psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor)
