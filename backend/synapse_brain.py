@@ -49,13 +49,29 @@ Sede: Via San Lazzaro 16, 34122 Trieste
 Telefono: 3336263840
 Email: info@soluzionecasatrieste.it
 P.IVA: 01352380321
-Settore: Edilizia e ristrutturazioni, specializzazione bagni e impianti
-Team: Oleg (dipendente), Moki (collaboratore esterno con P.IVA, lavora quotidianamente)
-Partner: Climatrieste (condivide ufficio, collaborazione quotidiana)
-Collaboratore: Giorgio (ruolo in ridefinizione, gestisce case di cura)
-Progetto principale: Helyas, piattaforma AI modulare con cervello Round Table multi-AI
-Problemi prioritari: gestione comunicazioni clienti/fornitori, preventivi, recupero crediti
-Condizioni preventivi standard: 50% accettazione, saldo fine lavori, garanzia 5 anni, 7-15 gg lavorativi
+Settore: Edilizia e ristrutturazioni, specializzazione bagni e impianti di climatizzazione
+Colori aziendali: rosso/bordeaux e blu scuro
+
+TEAM:
+- Oleg: operaio, lavora solo in cantiere. Non si occupa di ufficio, amministrazione, documenti o clienti. E' con l'azienda da circa 2 mesi.
+- Moki: collaboratore esterno con P.IVA propria, lavora quotidianamente, conosce bene l'azienda
+- Giorgio: collaboratore operativo, ruolo in ridefinizione, gestiva le case di cura (4 strutture)
+
+PARTNER:
+- Climatrieste: condivide l'ufficio, collaborazione quotidiana
+
+CONDIZIONI DI PAGAMENTO (variano sempre, non esiste regola fissa):
+- Climatizzatori: 50% accettazione, saldo fine lavori
+- Cantieri grandi: acconto variabile (anche 10%), SAL intermedi, saldo fine lavori
+- Lavoretti piccoli: pagamento a fine lavori
+
+PROBLEMI PRIORITARI:
+- Troppo tempo su comunicazioni clienti/fornitori
+- Preventivi manuali non standardizzati
+- Difficolta a recuperare crediti
+
+PROGETTO PRINCIPALE:
+Helyas, piattaforma AI modulare con cervello Round Table multi-AI
 """
 
 def init_db():
