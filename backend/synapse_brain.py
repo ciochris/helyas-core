@@ -163,11 +163,18 @@ def init_db():
             )
         """)
         cur.execute("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS project_id TEXT")
-        cur.execute("""
-            INSERT INTO user_profile (id, content)
-            VALUES (1, %s)
-            ON CONFLICT (id) DO NOTHING
-        """, (INITIAL_PROFILE,))
+        # Aggiorna il profilo statico solo se è ancora quello vecchio (contiene dati dinamici)
+        cur.execute("SELECT content FROM user_profile WHERE id = 1")
+        existing = cur.fetchone()
+        old_profile_has_dynamic = existing and any(
+            x in existing["content"] for x in ["Team:", "Partner:", "Collaboratore:", "Problemi prioritari:", "Condizioni preventivi"]
+        )
+        if not existing or old_profile_has_dynamic:
+            cur.execute("""
+                INSERT INTO user_profile (id, content, updated_at)
+                VALUES (1, %s, NOW())
+                ON CONFLICT (id) DO UPDATE SET content = %s, updated_at = NOW()
+            """, (INITIAL_PROFILE, INITIAL_PROFILE))
         conn.commit()
         cur.close()
         conn.close()
@@ -591,6 +598,11 @@ def update_profile():
         return jsonify({"status": "updated"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@app.route("/global_memory", methods=["GET"])
+def get_global_memory_api():
+    memory = get_global_memory()
+    return jsonify({"global_memory": memory, "empty": not bool(memory)})
 
 # ── API Legacy ────────────────────────────────────────────────────────────────
 
