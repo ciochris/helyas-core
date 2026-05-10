@@ -466,23 +466,48 @@ def chat(session_id):
         if project_memory:
             full_context += "\n\nCONTESTO PROGETTO CORRENTE:\n" + project_memory
 
-        # Esegui round table con contesto completo
+        # Agente Interprete: analizza la domanda e decide il tipo di risposta
+        from backend.orchestrator import interpret_question
         start_time = time.time()
-        result = round_table(
-            user_message,
-            max_rounds=max_rounds,
-            session_context=session_context,
-            user_profile=full_context,
-            project_memory=""
-        )
-        execution_time = round(time.time() - start_time, 3)
 
-        decision = result.get("decision", {})
-        synthesis = decision.get("synthesis", "")
-        log = decision.get("log", [])
+        interpretation = interpret_question(user_message, full_context, session_context)
+        response_type = interpretation.get("type", "roundtable")
 
-        # Pulisce markdown dalla sintesi prima di salvare
-        synthesis_clean = clean_markdown(synthesis)
+        if response_type == "direct":
+            # Risposta diretta senza Round Table
+            synthesis = interpretation.get("direct_answer", "")
+            synthesis_clean = clean_markdown(synthesis)
+            log = []
+            execution_time = round(time.time() - start_time, 3)
+
+        elif response_type == "clarify":
+            # Helyas chiede chiarimenti
+            questions = interpretation.get("questions", [])
+            synthesis = "Ho bisogno di qualche informazione in piu prima di rispondere al meglio:\n\n"
+            for i, q in enumerate(questions, 1):
+                synthesis += f"{i}. {q}\n"
+            synthesis_clean = synthesis
+            log = []
+            execution_time = round(time.time() - start_time, 3)
+
+        else:
+            # Round Table con domanda riscritta
+            rewritten = interpretation.get("rewritten", user_message)
+            if not rewritten or rewritten == user_message:
+                rewritten = user_message
+
+            result = round_table(
+                rewritten,
+                max_rounds=max_rounds,
+                session_context=session_context,
+                user_profile=full_context,
+                project_memory=""
+            )
+            execution_time = round(time.time() - start_time, 3)
+            decision = result.get("decision", {})
+            synthesis = decision.get("synthesis", "")
+            log = decision.get("log", [])
+            synthesis_clean = clean_markdown(synthesis)
 
         # Salva risposta assistant
         cur.execute(
