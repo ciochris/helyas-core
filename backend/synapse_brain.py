@@ -41,6 +41,23 @@ def clean_markdown(text):
 def get_db():
     return psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor)
 
+INITIAL_PROFILE = """PROFILO UTENTE:
+Nome: Christian Ciofi
+Azienda: Soluzione Casa Srls (in trasformazione in Srl)
+Ruolo: Amministratore Unico
+Sede: Via San Lazzaro 16, 34122 Trieste
+Telefono: 3336263840
+Email: info@soluzionecasatrieste.it
+P.IVA: 01352380321
+Settore: Edilizia e ristrutturazioni, specializzazione bagni e impianti
+Team: Oleg (dipendente), Moki (collaboratore esterno con P.IVA, lavora quotidianamente)
+Partner: Climatrieste (condivide ufficio, collaborazione quotidiana)
+Collaboratore: Giorgio (ruolo in ridefinizione, gestisce case di cura)
+Progetto principale: Helyas, piattaforma AI modulare con cervello Round Table multi-AI
+Problemi prioritari: gestione comunicazioni clienti/fornitori, preventivi, recupero crediti
+Condizioni preventivi standard: 50% accettazione, saldo fine lavori, garanzia 5 anni, 7-15 gg lavorativi
+"""
+
 def init_db():
     """Crea le tabelle se non esistono."""
     try:
@@ -50,6 +67,7 @@ def init_db():
             CREATE TABLE IF NOT EXISTS sessions (
                 id TEXT PRIMARY KEY,
                 title TEXT,
+                project_id TEXT,
                 created_at TIMESTAMP DEFAULT NOW(),
                 updated_at TIMESTAMP DEFAULT NOW()
             )
@@ -66,11 +84,97 @@ def init_db():
                 created_at TIMESTAMP DEFAULT NOW()
             )
         """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS user_profile (
+                id INTEGER PRIMARY KEY DEFAULT 1,
+                content TEXT NOT NULL DEFAULT '',
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS projects (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS project_memory (
+                id INTEGER PRIMARY KEY DEFAULT 1,
+                project_id TEXT,
+                content TEXT NOT NULL DEFAULT '',
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        cur.execute("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS project_id TEXT")
+        cur.execute("""
+            INSERT INTO user_profile (id, content)
+            VALUES (1, %s)
+            ON CONFLICT (id) DO NOTHING
+        """, (INITIAL_PROFILE,))
         conn.commit()
         cur.close()
         conn.close()
     except Exception as e:
         print(f"[DB INIT ERROR] {e}")
+
+def get_user_profile():
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT content FROM user_profile WHERE id = 1")
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        return row["content"] if row else INITIAL_PROFILE
+    except Exception as e:
+        print(f"[PROFILE ERROR] {e}")
+        return INITIAL_PROFILE
+
+def get_project_memory(project_id):
+    if not project_id:
+        return ""
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT content FROM project_memory WHERE project_id = %s", (project_id,))
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        return row["content"] if row else ""
+    except Exception as e:
+        print(f"[PROJECT MEMORY ERROR] {e}")
+        return ""
+
+def update_project_memory_auto(project_id, session_synthesis):
+    if not project_id or not session_synthesis:
+        return
+    try:
+        from backend.orchestrator import call_openai
+        current = get_project_memory(project_id)
+        prompt = (
+            "Sei un assistente che mantiene la memoria di un progetto.\n\n"
+            "MEMORIA ATTUALE:\n" + (current if current else "(vuota)") + "\n\n"
+            "NUOVA SESSIONE:\n" + session_synthesis[:800] + "\n\n"
+            "Aggiorna la memoria integrando le novita. Mantieni info importanti, "
+            "aggiungi novita, rimuovi obsolete. Max 400 parole. Solo testo, niente altro."
+        )
+        updated = call_openai(prompt)
+        if updated and "ERROR" not in updated:
+            conn = get_db()
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO project_memory (id, project_id, content, updated_at)
+                VALUES (1, %s, %s, NOW())
+                ON CONFLICT (id) DO UPDATE SET content = %s, project_id = %s, updated_at = NOW()
+            """, (project_id, updated, updated, project_id))
+            conn.commit()
+            cur.close()
+            conn.close()
+    except Exception as e:
+        print(f"[PROJECT MEMORY UPDATE ERROR] {e}")
 
 # ── Backlog (compatibilità con versioni precedenti) ───────────────────────────
 
@@ -235,9 +339,22 @@ def chat(session_id):
 
         conn.commit()
 
-        # Esegui round table con contesto sessione
+        # Recupera profilo utente e memoria progetto
+        user_profile = get_user_profile()
+        cur.execute("SELECT project_id FROM sessions WHERE id = %s", (session_id,))
+        session_row = cur.fetchone()
+        project_id = session_row["project_id"] if session_row else None
+        project_memory = get_project_memory(project_id) if project_id else ""
+
+        # Esegui round table con contesto completo
         start_time = time.time()
-        result = round_table(user_message, max_rounds=max_rounds, session_context=session_context)
+        result = round_table(
+            user_message,
+            max_rounds=max_rounds,
+            session_context=session_context,
+            user_profile=user_profile,
+            project_memory=project_memory
+        )
         execution_time = round(time.time() - start_time, 3)
 
         decision = result.get("decision", {})
@@ -261,8 +378,98 @@ def chat(session_id):
         cur.close()
         conn.close()
 
+        # Aggiorna memoria progetto in background (non blocca la risposta)
+        if project_id and synthesis_clean:
+            import threading
+            threading.Thread(
+                target=update_project_memory_auto,
+                args=(project_id, synthesis_clean),
+                daemon=True
+            ).start()
+
         return jsonify(msg)
 
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# ── API Progetti ─────────────────────────────────────────────────────────────
+
+@app.route("/projects", methods=["GET"])
+def list_projects():
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM projects ORDER BY updated_at DESC")
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return jsonify({"projects": [dict(r) for r in rows]})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/projects", methods=["POST"])
+def create_project():
+    try:
+        data = request.get_json(force=True)
+        project_id = str(uuid.uuid4())[:8]
+        name = data.get("name", "Nuovo progetto")
+        description = data.get("description", "")
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO projects (id, name, description) VALUES (%s, %s, %s) RETURNING *",
+            (project_id, name, description)
+        )
+        row = cur.fetchone()
+        conn.commit()
+        cur.close()
+        conn.close()
+        return jsonify(dict(row))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/projects/<project_id>", methods=["DELETE"])
+def delete_project(project_id):
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("UPDATE sessions SET project_id = NULL WHERE project_id = %s", (project_id,))
+        cur.execute("DELETE FROM project_memory WHERE project_id = %s", (project_id,))
+        cur.execute("DELETE FROM projects WHERE id = %s", (project_id,))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return jsonify({"status": "deleted"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/projects/<project_id>/memory", methods=["GET"])
+def get_project_memory_api(project_id):
+    memory = get_project_memory(project_id)
+    return jsonify({"memory": memory})
+
+@app.route("/profile", methods=["GET"])
+def get_profile():
+    return jsonify({"profile": get_user_profile()})
+
+@app.route("/profile", methods=["POST"])
+def update_profile():
+    try:
+        data = request.get_json(force=True)
+        content = data.get("content", "").strip()
+        if not content:
+            return jsonify({"error": "Contenuto vuoto"}), 400
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO user_profile (id, content, updated_at)
+            VALUES (1, %s, NOW())
+            ON CONFLICT (id) DO UPDATE SET content = %s, updated_at = NOW()
+        """, (content, content))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return jsonify({"status": "updated"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
