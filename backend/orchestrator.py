@@ -69,13 +69,13 @@ def interpret_question(task: str, user_profile: str = "", session_context: list 
     """
     context_text = ""
     if session_context and len(session_context) > 1:
-        recent = session_context[-4:]
+        # Passa tutta la sessione corrente all interprete per non perdere il filo
         lines = []
-        for msg in recent:
+        for msg in session_context:
             role_label = "Utente" if msg.get("role") == "user" else "Helyas"
-            c = (msg.get("content") or "")[:150]
+            c = (msg.get("content") or "")[:300]
             lines.append(f"{role_label}: {c}")
-        context_text = "\nCONVERSAZIONE RECENTE:\n" + "\n".join(lines)
+        context_text = "\nCONVERSAZIONE IN CORSO (leggi tutta per capire il contesto):\n" + "\n".join(lines)
 
     profile_text = ""
     if user_profile:
@@ -96,6 +96,8 @@ Esempi: "come miglioro i miei margini", "come gestisco questo cliente", "dammi u
 
 TIPO "clarify": domanda ambigua o incompleta dove servono informazioni essenziali prima di rispondere bene.
 Esempi: "aiutami con il cantiere" (quale?), "cosa faccio con questo problema" (quale problema?).
+
+IMPORTANTE: Se il messaggio e chiaramente la continuazione di una conversazione gia avviata (usa pronomi come "questo", "quello", "poterlo fare", "come detto prima", o e una domanda di approfondimento su qualcosa gia discusso), NON classificare come clarify. Usa il contesto della conversazione per capire a cosa si riferisce e classifica come direct o roundtable.
 
 Rispondi SOLO con JSON, nessun testo prima o dopo:
 {
@@ -149,13 +151,13 @@ def build_prompt(agent_name: str, role: str, task: str, context: list = None, se
     # Contesto della sessione (storico conversazione)
     session_text = ""
     if session_context and len(session_context) > 1:
-        recent = session_context[-6:]
+        # Passa tutta la sessione per mantenere il filo della conversazione
         lines = []
-        for msg in recent:
+        for msg in session_context:
             role_label = "Utente" if msg.get("role") == "user" else "Helyas"
-            c = (msg.get("content") or "")[:200]
+            c = (msg.get("content") or "")[:400]
             lines.append(f"{role_label}: {c}")
-        session_text = "\n\nCONVERSAZIONE PRECEDENTE:\n" + "\n".join(lines) + "\n"
+        session_text = "\n\nCONVERSAZIONE IN CORSO:\n" + "\n".join(lines) + "\n"
 
     # Contesto del round precedente
     context_text = ""
