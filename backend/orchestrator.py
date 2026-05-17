@@ -141,7 +141,14 @@ def build_prompt(agent_name: str, role: str, task: str, context: list = None, se
     # Profilo utente
     profile_text = ""
     if user_profile:
-        profile_text = f"\n\nCHI E' L'UTENTE:\n{user_profile.strip()}\n"
+        profile_text = (
+            f"\n\nCONTESTO UTENTE:\n{user_profile.strip()}\n\n"
+            "ISTRUZIONE IMPORTANTE: Usa questo contesto per ragionare, non per citare. "
+            "Non menzionare nomi di persone o situazioni specifiche a meno che siano direttamente rilevanti per questa domanda. "
+            "Parti dal contesto per arrivare a conclusioni specifiche che un consulente generico non potrebbe dare. "
+            "Esempio sbagliato: 'Oleg e Moki dovrebbero fare X'. "
+            "Esempio giusto: 'Dato che il tuo team e piccolo, concentra le risorse su Y invece di Z'.\n"
+        )
 
     # Memoria del progetto
     project_text = ""
@@ -151,13 +158,15 @@ def build_prompt(agent_name: str, role: str, task: str, context: list = None, se
     # Contesto della sessione (storico conversazione)
     session_text = ""
     if session_context and len(session_context) > 1:
-        # Passa tutta la sessione per mantenere il filo della conversazione
+        # Per gli agenti: ultimi 6 messaggi compressi (controllo costi)
+        # La sessione completa va solo all Interprete
+        recent = session_context[-6:]
         lines = []
-        for msg in session_context:
+        for msg in recent:
             role_label = "Utente" if msg.get("role") == "user" else "Helyas"
-            c = (msg.get("content") or "")[:400]
+            c = (msg.get("content") or "")[:200]
             lines.append(f"{role_label}: {c}")
-        session_text = "\n\nCONVERSAZIONE IN CORSO:\n" + "\n".join(lines) + "\n"
+        session_text = "\n\nCONTESTO RECENTE:\n" + "\n".join(lines) + "\n"
 
     # Contesto del round precedente
     context_text = ""
