@@ -183,12 +183,14 @@ def build_prompt(agent_name: str, role: str, task: str, context: list = None, se
 {context_text}
 Task da analizzare: {task}
 
-REGOLA IMPORTANTE: Usa il contesto sull'utente (team, collaboratori, clienti, cantieri) SOLO quando e genuinamente rilevante per rispondere a questo specifico task. Non citare persone o situazioni solo per dimostrare che le conosci. Se il task non riguarda persone specifiche, rispondi in modo generale.
+COME RISPONDERE:
+Prima di scrivere qualsiasi cosa, chiediti: questa informazione cambia qualcosa per questa persona in questa situazione specifica? Se la risposta e no, non includerla.
 
-Rispondi in italiano. Fornisci:
-1. PROPOSTA: la tua analisi/soluzione
-2. RISCHI: 2-3 rischi principali (formato: "- rischio")
-3. LACUNE: 1-2 informazioni mancanti (formato: "- lacuna")
+Ogni punto che scrivi deve essere presente perche senza di esso la risposta sarebbe peggiore, non perche completa un elenco. Non essere completo - sii utile. La lunghezza giusta e quella necessaria, ne piu ne meno.
+
+Ragiona dal contesto dell utente per arrivare a conclusioni specifiche. Non citare nomi o situazioni meccanicamente - usali solo se cambiano concretamente la risposta.
+
+Rispondi in italiano. Struttura liberamente in base a cosa serve per questa risposta specifica.
 """
 
 
