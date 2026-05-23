@@ -331,15 +331,53 @@ def round_table(task: str, max_rounds: int = 2, session_context: list = None, us
         if latest and is_consensus(latest):
             consensus_reached = True
 
-    # Sintesi finale — usa il testo grezzo del Builder più completo
-    builder_logs = [log for log in history if log["role"] == "Builder"]
-    if builder_logs:
-        best = max(builder_logs, key=lambda x: len(x.get("raw", "") or x.get("proposal", "")))
-        synthesis = (best.get("raw") or best.get("proposal", "Nessuna proposta raccolta.")).strip()
-    else:
-        synthesis = "Nessuna proposta raccolta."
+    # Sintesi finale — GPT sintetizza tutti i contributi in una risposta coerente
+    all_proposals = []
+    for log in history:
+        if log.get("proposal"):
+            all_proposals.append(f"[{log['agent']} - {log['role']}]: {log['proposal'][:300]}")
+
+    proposals_text = "\n".join(all_proposals)
+
+    # Contesto conversazione per la sintesi
+    session_text = ""
+    if session_context and len(session_context) > 1:
+        lines = []
+        for msg in session_context[-6:]:
+            role_label = "Utente" if msg.get("role") == "user" else "Helyas"
+            lines.append(f"{role_label}: {(msg.get('content') or '')[:300]}")
+        session_text = "\nCONVERSAZIONE PRECEDENTE:\n" + "\n".join(lines) + "\n"
+
+    profile_text = f"\nCONTESTO UTENTE:\n{user_profile[:400]}\n" if user_profile else ""
+
+    synthesis_prompt = (
+        "Sei Helyas, un assistente AI personale e diretto.\n"
+        + profile_text
+        + session_text
+        + "\nHai appena ricevuto questi contributi da un team di analisi:\n"
+        + proposals_text
+        + "\n\nDOMANDA ORIGINALE: " + task
+        + "\n\nOra rispondi tu direttamente all'utente in prima persona, come se fossi il suo consulente di fiducia. "
+        "Sintetizza i contributi migliori in una risposta unica, coerente e utile. "
+        "Non citare gli agenti, non fare liste meccaniche. "
+        "Prima di scrivere ogni frase chiediti: questa informazione cambia qualcosa per questa persona? "
+        "Se no, non scriverla. Rispondi in italiano, tono diretto e umano."
+    )
+
+    synthesis = call_openai(synthesis_prompt)
+    if not synthesis or "ERROR" in synthesis:
+        synthesis = all_proposals[0] if all_proposals else "Nessuna proposta raccolta."
 
     final_summary = {
+        "summary": f"Sintesi dopo {round_count} round - consenso={'sì' if consensus_reached else 'no'}",
+        "synthesis": synthesis,
+        "decisions": [log["proposal"] for log in history[-len(agents):]],
+        "final_artifacts": [a["name"] for log in history[-len(agents):] for a in log.get("artifacts", [])],
+        "approval_requested": True,
+        "log": history
+    }
+
+    return {"decision": final_summary}
         "summary": f"Sintesi dopo {round_count} round - consenso={'sì' if consensus_reached else 'no'}",
         "synthesis": synthesis,
         "decisions": [log["proposal"] for log in history[-len(agents):]],
