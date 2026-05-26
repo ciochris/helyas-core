@@ -348,7 +348,7 @@ def round_table(task: str, max_rounds: int = 2, session_context: list = None, us
             lines.append(f"{role_label}: {(msg.get('content') or '')[:300]}")
         session_text = "\nCONVERSAZIONE PRECEDENTE:\n" + "\n".join(lines) + "\n"
 
-    profile_text = f"\nCONTESTO UTENTE:\n{user_profile[:400]}\n" if user_profile else ""
+        profile_text = f"\nCONTESTO UTENTE:\n{user_profile[:400]}\n" if user_profile else ""
 
     synthesis_prompt = (
         "Sei Helyas, un assistente AI personale e diretto.\n"
@@ -378,12 +378,4 @@ def round_table(task: str, max_rounds: int = 2, session_context: list = None, us
     }
 
     return {"decision": final_summary}
-        "summary": f"Sintesi dopo {round_count} round - consenso={'sì' if consensus_reached else 'no'}",
-        "synthesis": synthesis,
-        "decisions": [log["proposal"] for log in history[-len(agents):]],
-        "final_artifacts": [a["name"] for log in history[-len(agents):] for a in log.get("artifacts", [])],
-        "approval_requested": True,
-        "log": history
-    }
-
-    return {"decision": final_summary}
+ 
