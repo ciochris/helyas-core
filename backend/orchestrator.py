@@ -361,7 +361,7 @@ def round_table(task: str, max_rounds: int = 2, session_context: list = None, us
         "Sintetizza i contributi migliori in una risposta unica, coerente e utile. "
         "Non citare gli agenti, non fare liste meccaniche. "
         "Prima di scrivere ogni frase chiediti: questa informazione cambia qualcosa per questa persona? "
-        "Se no, non scriverla. Rispondi in italiano, tono diretto e umano."
+        "Se no, non scriverla. Rispondi in italiano, tono diretto e umano. Massimo 3-4 frasi. Se la risposta richiede più dettagli, scrivi le 3 frasi più utili e offri di approfondire."
     )
 
     synthesis = call_openai(synthesis_prompt)
