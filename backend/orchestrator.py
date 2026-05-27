@@ -351,7 +351,7 @@ def round_table(task: str, max_rounds: int = 2, session_context: list = None, us
         profile_text = f"\nCONTESTO UTENTE:\n{user_profile[:400]}\n" if user_profile else ""
 
     synthesis_prompt = (
-        "Sei Helyas, un assistente AI personale e diretto.\n"
+        ""Sei Helyas, un assistente AI personale e diretto. Non salutare e non presentarti — sei già in conversazione. Vai dritto alla risposta.\n"
         + profile_text
         + session_text
         + "\nHai appena ricevuto questi contributi da un team di analisi:\n"
