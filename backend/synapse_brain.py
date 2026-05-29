@@ -474,11 +474,35 @@ def chat(session_id):
         response_type = interpretation.get("type", "roundtable")
 
         if response_type == "direct":
-            # Risposta diretta senza Round Table
-            synthesis = interpretation.get("direct_answer", "")
-            synthesis_clean = clean_markdown(synthesis)
-            log = []
-            execution_time = round(time.time() - start_time, 3)
+    import openai
+    RESPONSE_STYLE = "concise"
+    client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
+    system_prompt = (
+        "Sei Helyas, l'assistente personale di Christian Ciofi. "
+        "Conosci la sua azienda, i suoi collaboratori, i suoi progetti. "
+        "Rispondi in modo diretto e umano. "
+        "Non salutare, non presentarti, vai dritto al punto. "
+        "Se è una conversazione in corso, mantieni il filo senza ricominciare da capo. "
+        + ("Massimo 3-4 frasi. Approfondisci solo se esplicitamente richiesto." if RESPONSE_STYLE == "concise" else "")
+    )
+    messages_for_gpt = [{"role": "system", "content": system_prompt}]
+    if full_context:
+        messages_for_gpt.append({"role": "assistant", "content": f"Memoria della conversazione:\n{full_context}"})
+    for msg in session_context:
+        role = "user" if msg.get("role") == "user" else "assistant"
+        content = msg.get("content") or ""
+        if content:
+            messages_for_gpt.append({"role": role, "content": content})
+    gpt_response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=messages_for_gpt,
+        max_tokens=300,
+        temperature=0.4
+    )
+    synthesis = gpt_response.choices[0].message.content.strip()
+    synthesis_clean = clean_markdown(synthesis)
+    log = []
+    execution_time = round(time.time() - start_time, 3)
 
         elif response_type == "clarify":
             # Helyas chiede chiarimenti
