@@ -61,15 +61,8 @@ def call_gemini(prompt: str) -> str:
 # ── Agente Interprete ────────────────────────────────────────────────────────
 
 def interpret_question(task: str, user_profile: str = "", session_context: list = None) -> dict:
-    """
-    Analizza la domanda e decide:
-    - Se è semplice: risponde direttamente senza Round Table
-    - Se è complessa: riscrive la domanda e decide se serve chiarimento
-    - Se mancano info: fa domande mirate prima di procedere
-    """
     context_text = ""
     if session_context and len(session_context) > 1:
-        # Passa tutta la sessione corrente all interprete per non perdere il filo
         lines = []
         for msg in session_context:
             role_label = "Utente" if msg.get("role") == "user" else "Helyas"
@@ -89,32 +82,27 @@ def interpret_question(task: str, user_profile: str = "", session_context: list 
         + """\n\nDecidi il tipo di risposta necessaria:
 
 TIPO "direct": domanda semplice che non richiede analisi profonda.
-Esempi: saluti, domande fattuali semplici, richieste di informazioni base, conversazione generale, calcoli semplici, "che giorno e domani", "quanto fa 2+2", "come stai".
+Esempi: saluti, domande fattuali semplici, richieste di informazioni base, conversazione generale, calcoli semplici.
 
 TIPO "roundtable": domanda che richiede analisi, pianificazione, decisioni strategiche, confronto di opzioni, problemi complessi aziendali.
-Esempi: "come miglioro i miei margini", "come gestisco questo cliente", "dammi un piano per X", "analizza questa situazione".
+Esempi: "come miglioro i miei margini", "come gestisco questo cliente", "dammi un piano per X".
 
 TIPO "clarify": domanda ambigua o incompleta dove servono informazioni essenziali prima di rispondere bene.
 Esempi: "aiutami con il cantiere" (quale?), "cosa faccio con questo problema" (quale problema?).
 
-IMPORTANTE: Se il messaggio e chiaramente la continuazione di una conversazione gia avviata (usa pronomi come "questo", "quello", "poterlo fare", "come detto prima", o e una domanda di approfondimento su qualcosa gia discusso), NON classificare come clarify. Usa il contesto della conversazione per capire a cosa si riferisce e classifica come direct o roundtable.
+IMPORTANTE: Se il messaggio e chiaramente la continuazione di una conversazione gia avviata (usa pronomi come "questo", "quello", o e una domanda di approfondimento su qualcosa gia discusso), NON classificare come clarify. Usa il contesto per capire e classifica come direct o roundtable.
 
 Rispondi SOLO con JSON, nessun testo prima o dopo:
 {
   "type": "direct" | "roundtable" | "clarify",
-  "rewritten": "versione migliorata e piu precisa della domanda (per roundtable)",
+  "rewritten": "versione migliorata della domanda (per roundtable)",
   "direct_answer": "risposta diretta completa (solo per type=direct)",
-  "questions": ["domanda 1", "domanda 2"] 
-}
-
-Per type=direct: compila direct_answer con la risposta completa, lascia rewritten vuoto.
-Per type=roundtable: compila rewritten con domanda migliorata, lascia direct_answer vuoto, questions vuoto.
-Per type=clarify: compila questions (max 2), lascia direct_answer vuoto."""
+  "questions": ["domanda 1", "domanda 2"]
+}"""
     )
 
     try:
         raw = call_openai(prompt)
-        # Pulisce il JSON da eventuali backtick
         raw = raw.strip()
         if raw.startswith("```"):
             raw = raw.split("```")[1]
@@ -124,7 +112,6 @@ Per type=clarify: compila questions (max 2), lascia direct_answer vuoto."""
         result = json.loads(raw)
         return result
     except Exception as e:
-        # Fallback: vai al round table con la domanda originale
         return {"type": "roundtable", "rewritten": task, "direct_answer": "", "questions": []}
 
 
@@ -138,28 +125,21 @@ def build_prompt(agent_name: str, role: str, task: str, context: list = None, se
         "Critic":   "Critica costruttivamente le soluzioni proposte. Identifica debolezze, rischi non considerati e suggerisci miglioramenti."
     }
 
-    # Profilo utente
     profile_text = ""
     if user_profile:
         profile_text = (
             f"\n\nCONTESTO UTENTE:\n{user_profile.strip()}\n\n"
             "ISTRUZIONE IMPORTANTE: Usa questo contesto per ragionare, non per citare. "
-            "Non menzionare nomi di persone o situazioni specifiche a meno che siano direttamente rilevanti per questa domanda. "
-            "Parti dal contesto per arrivare a conclusioni specifiche che un consulente generico non potrebbe dare. "
-            "Esempio sbagliato: 'Oleg e Moki dovrebbero fare X'. "
-            "Esempio giusto: 'Dato che il tuo team e piccolo, concentra le risorse su Y invece di Z'.\n"
+            "Non menzionare nomi di persone o situazioni specifiche a meno che siano direttamente rilevanti. "
+            "Parti dal contesto per arrivare a conclusioni specifiche.\n"
         )
 
-    # Memoria del progetto
     project_text = ""
     if project_memory:
         project_text = f"\n\nCONTESTO PROGETTO:\n{project_memory.strip()}\n"
 
-    # Contesto della sessione (storico conversazione)
     session_text = ""
     if session_context and len(session_context) > 1:
-        # Per gli agenti: ultimi 6 messaggi compressi (controllo costi)
-        # La sessione completa va solo all Interprete
         recent = session_context[-6:]
         lines = []
         for msg in recent:
@@ -168,7 +148,6 @@ def build_prompt(agent_name: str, role: str, task: str, context: list = None, se
             lines.append(f"{role_label}: {c}")
         session_text = "\n\nCONTESTO RECENTE:\n" + "\n".join(lines) + "\n"
 
-    # Contesto del round precedente
     context_text = ""
     if context:
         last = context[-1]
@@ -176,7 +155,7 @@ def build_prompt(agent_name: str, role: str, task: str, context: list = None, se
 
     return f"""Sei {agent_name} nel ruolo di {role} in una sessione di analisi collaborativa multi-AI.
 
-{role_instructions.get(role, 'Contribuisci con la tua perspettiva.')}
+{role_instructions.get(role, 'Contribuisci con la tua prospettiva.')}
 {profile_text}
 {project_text}
 {session_text}
@@ -186,16 +165,13 @@ Task da analizzare: {task}
 COME RISPONDERE:
 Prima di scrivere qualsiasi cosa, chiediti: questa informazione cambia qualcosa per questa persona in questa situazione specifica? Se la risposta e no, non includerla.
 
-Ogni punto che scrivi deve essere presente perche senza di esso la risposta sarebbe peggiore, non perche completa un elenco. Non essere completo - sii utile. La lunghezza giusta e quella necessaria, ne piu ne meno.
-
-Ragiona dal contesto dell utente per arrivare a conclusioni specifiche. Non citare nomi o situazioni meccanicamente - usali solo se cambiano concretamente la risposta.
+Ragiona dal contesto dell utente per arrivare a conclusioni specifiche. Non citare nomi o situazioni meccanicamente.
 
 Rispondi in italiano. Struttura liberamente in base a cosa serve per questa risposta specifica.
 """
 
 
 def parse_response(text: str) -> dict:
-    """Estrae proposta, rischi e lacune dal testo libero dell'AI."""
     proposal, risks, gaps = "", [], []
     current = None
 
@@ -206,11 +182,9 @@ def parse_response(text: str) -> dict:
 
         line_upper = line.upper()
 
-        # Riconosce "1. PROPOSTA:", "PROPOSTA:", "**PROPOSTA:**" ecc.
         if "PROPOSTA" in line_upper and ":" in line:
             current = "proposal"
             after_colon = line.split(":", 1)[-1].strip()
-            # Rimuove eventuali ** residui del markdown
             after_colon = after_colon.replace("**", "").strip()
             proposal = after_colon
         elif "RISCHI" in line_upper and ":" in line:
@@ -227,12 +201,9 @@ def parse_response(text: str) -> dict:
             clean = line.replace("**", "").strip()
             proposal += " " + clean
 
-    # Pulizia finale della proposta
     proposal = proposal.strip()
 
-    # Se non ha trovato nulla di strutturato, usa il testo grezzo pulito
     if not proposal:
-        # Rimuove righe che sembrano intestazioni di sezione
         lines = [l.strip() for l in text.splitlines() if l.strip()
                  and "PROPOSTA" not in l.upper()
                  and "RISCHI" not in l.upper()
@@ -304,7 +275,6 @@ def round_table(task: str, max_rounds: int = 2, session_context: list = None, us
         round_logs = []
         context = history[-len(agents):] if history else None
 
-        # Chiamate parallele: tutti gli agenti e ruoli contemporaneamente
         tasks = [(agent, role) for agent in agents for role in roles]
         with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
             futures = {
@@ -325,13 +295,12 @@ def round_table(task: str, max_rounds: int = 2, session_context: list = None, us
 
         history.extend(round_logs)
 
-        # Controlla consenso sull'ultimo ruolo (Critic) di ogni agente
         latest = [next((l for l in reversed(round_logs) if l["agent"] == a), None) for a in agents]
         latest = [l for l in latest if l]
         if latest and is_consensus(latest):
             consensus_reached = True
 
-    # Sintesi finale — GPT sintetizza tutti i contributi in una risposta coerente
+    # Sintesi finale con GPT
     all_proposals = []
     for log in history:
         if log.get("proposal"):
@@ -339,7 +308,6 @@ def round_table(task: str, max_rounds: int = 2, session_context: list = None, us
 
     proposals_text = "\n".join(all_proposals)
 
-    # Contesto conversazione per la sintesi
     session_text = ""
     if session_context and len(session_context) > 1:
         lines = []
@@ -348,10 +316,10 @@ def round_table(task: str, max_rounds: int = 2, session_context: list = None, us
             lines.append(f"{role_label}: {(msg.get('content') or '')[:300]}")
         session_text = "\nCONVERSAZIONE PRECEDENTE:\n" + "\n".join(lines) + "\n"
 
-        profile_text = f"\nCONTESTO UTENTE:\n{user_profile[:400]}\n" if user_profile else ""
+    profile_text = f"\nCONTESTO UTENTE:\n{user_profile[:400]}\n" if user_profile else ""
 
     synthesis_prompt = (
-        ""Sei Helyas, un assistente AI personale e diretto. Non salutare e non presentarti - sei già in conversazione. Vai dritto alla risposta.\n"
+        "Sei Helyas, un assistente AI personale e diretto.\n"
         + profile_text
         + session_text
         + "\nHai appena ricevuto questi contributi da un team di analisi:\n"
@@ -361,7 +329,7 @@ def round_table(task: str, max_rounds: int = 2, session_context: list = None, us
         "Sintetizza i contributi migliori in una risposta unica, coerente e utile. "
         "Non citare gli agenti, non fare liste meccaniche. "
         "Prima di scrivere ogni frase chiediti: questa informazione cambia qualcosa per questa persona? "
-        "Se no, non scriverla. Rispondi in italiano, tono diretto e umano. Massimo 3-4 frasi. Se la risposta richiede più dettagli, scrivi le 3 frasi più utili e offri di approfondire."
+        "Se no, non scriverla. Rispondi in italiano, tono diretto e umano. Massimo 3-4 frasi."
     )
 
     synthesis = call_openai(synthesis_prompt)
@@ -369,7 +337,7 @@ def round_table(task: str, max_rounds: int = 2, session_context: list = None, us
         synthesis = all_proposals[0] if all_proposals else "Nessuna proposta raccolta."
 
     final_summary = {
-        "summary": f"Sintesi dopo {round_count} round - consenso={'sì' if consensus_reached else 'no'}",
+        "summary": f"Sintesi dopo {round_count} round - consenso={'si' if consensus_reached else 'no'}",
         "synthesis": synthesis,
         "decisions": [log["proposal"] for log in history[-len(agents):]],
         "final_artifacts": [a["name"] for log in history[-len(agents):] for a in log.get("artifacts", [])],
@@ -378,4 +346,3 @@ def round_table(task: str, max_rounds: int = 2, session_context: list = None, us
     }
 
     return {"decision": final_summary}
- 
