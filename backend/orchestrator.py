@@ -84,8 +84,8 @@ def interpret_question(task: str, user_profile: str = "", session_context: list 
 TIPO "direct": domanda semplice che non richiede analisi profonda.
 Esempi: saluti, domande fattuali semplici, richieste di informazioni base, conversazione generale, calcoli semplici.
 
-TIPO "roundtable": domanda che richiede analisi, pianificazione, decisioni strategiche, confronto di opzioni, problemi complessi aziendali.
-Esempi: "come miglioro i miei margini", "come gestisco questo cliente", "dammi un piano per X".
+TIPO "roundtable": domanda che richiede analisi profonda, pianificazione strategica complessa, confronto di opzioni importanti. Usalo con parsimonia - solo per domande davvero complesse.
+Esempi: "dammi un piano completo per espandere il business", "come struttura la mia azienda". NON usare roundtable per: domande su prezzi, margini, sconti, materiali, clienti specifici - queste vanno sempre a direct.
 
 TIPO "clarify": domanda ambigua o incompleta dove servono informazioni essenziali prima di rispondere bene.
 Esempi: "aiutami con il cantiere" (quale?), "cosa faccio con questo problema" (quale problema?).
