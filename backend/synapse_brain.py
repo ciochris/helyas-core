@@ -732,14 +732,15 @@ def group_chat(session_id):
                 if m["message_type"] not in ("final_output",)
             )
 
-            profile = get_user_profile()
             summary_prompt = (
-                "Sei Helyas. Riassumi questo dibattito tra AI in modo diretto e utile per Christian Ciofi.\n\n"
-                f"PROFILO: {profile[:200]}\n\n"
+                "Sei Helyas. Produci un decision log operativo da questo dibattito. "
+                "Non un riassunto generico.\n\n"
                 f"DIBATTITO:\n{history_text[:3000]}\n\n"
-                "Scrivi una sintesi concisa (massimo 5 punti) delle conclusioni principali. "
-                "Evidenzia eventuali disaccordi o punti aperti. "
-                "Solo il testo della sintesi, niente altro."
+                "Elenca solo le decisioni concrete prese, formato:\n"
+                "- [DECISIONE] testo della decisione\n"
+                "Massimo 8 decisioni. Solo ciò che è stato deciso, "
+                "non opinioni o considerazioni generali. "
+                "Niente introduzioni o conclusioni."
             )
 
             synthesis = call_openai(summary_prompt)
@@ -773,7 +774,11 @@ def group_chat(session_id):
             update_debate_status(conn, debate_id, status="ready")
 
             messages = get_debate_messages(conn, debate_id)
-            full_content = " ".join(m["content"] for m in messages if m["speaker"] != "system")
+            # Includi tutti i messaggi non-system + i final_output di system (decision log)
+            full_content = " ".join(
+                m["content"] for m in messages
+                if m["speaker"] != "system" or m["message_type"] == "final_output"
+            )
 
             cur.close()
             conn.close()
@@ -1487,10 +1492,9 @@ function renderGCMessage(msg) {
 
     const labelMap = { christian: 'Christian', gpt: 'ChatGPT', claude: 'Claude', system: 'Sistema' };
     const label = labelMap[speaker] || speaker;
-    const roundBadge = (msg.round_index > 0) ? `<span class="gc-round-badge">round ${msg.round_index}</span>` : '';
     const content = (msg.content || '').replace(/\n/g, '<br>');
 
-    div.innerHTML = `<div class="gc-speaker-label ${speaker}">${label}${roundBadge}</div><div>${content}</div>`;
+    div.innerHTML = `<div class="gc-speaker-label ${speaker}">${label}</div><div>${content}</div>`;
     container.appendChild(div);
     container.scrollTop = container.scrollHeight;
 }
@@ -1582,8 +1586,7 @@ async function startGroupChat(firstSpeaker) {
     statusBar.classList.add('visible');
     statusText.textContent = (firstSpeaker === 'gpt' ? 'ChatGPT' : 'Claude') + ' sta iniziando...';
 
-    // Render messaggio Christian
-    renderGCMessage({ speaker: 'christian', content: message, round_index: 0 });
+    statusText.textContent = 'Dibattito avviato, attendo risposte...';
     gcInputEl.value = '';
     chatInputEl.value = '';
 
