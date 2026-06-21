@@ -420,13 +420,15 @@ def run_group_chat_loop(
         print(f"[GROUP CHAT ERROR] debate_id={debate_id} error={e}")
         print(traceback.format_exc())
         try:
-            update_debate_status(conn, debate_id, status='error',
-                metadata={"error": str(e)})
-            conn.commit()
+            if conn:
+                update_debate_status(conn, debate_id, status='error',
+                    metadata={"error": str(e)})
+                conn.commit()
         except:
             pass
-        finally:
-            try:
+    finally:
+        try:
+            if conn:
                 conn.close()
-            except:
-                pass
+        except:
+            pass
