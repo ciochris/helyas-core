@@ -416,24 +416,17 @@ def run_group_chat_loop(
             print(f"[GROUP CHAT] Debate {debate_id} safety limit a {max_rounds} round")
 
     except Exception as e:
-        print(f"[GROUP CHAT ERROR] debate {debate_id}: {e}")
-        if conn:
+        import traceback
+        print(f"[GROUP CHAT ERROR] debate_id={debate_id} error={e}")
+        print(traceback.format_exc())
+        try:
+            update_debate_status(conn, debate_id, status='error',
+                metadata={"error": str(e)})
+            conn.commit()
+        except:
+            pass
+        finally:
             try:
-                save_debate_message(
-                    conn=conn,
-                    session_id=session_id,
-                    debate_id=debate_id,
-                    speaker="system",
-                    target_agent=None,
-                    message_type="final_output",
-                    content=f"Errore interno: {str(e)}",
-                    status="error",
-                    round_index=0,
-                    metadata={"error": str(e)}
-                )
-                update_debate_status(conn, debate_id, status="error")
-            except Exception as e2:
-                print(f"[GROUP CHAT ERROR] Impossibile salvare errore: {e2}")
-    finally:
-        if conn:
-            conn.close()
+                conn.close()
+            except:
+                pass
