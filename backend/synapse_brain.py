@@ -1231,7 +1231,7 @@ def dashboard():
     <div class="topbar">
         <div class="session-title placeholder" id="sessionTitle">Seleziona o crea una sessione</div>
         <div style="display:flex; gap:12px; align-items:center;">
-            <div class="mode-toggle">
+            <div class="mode-toggle" style="display:none">
                 <button class="mode-btn active" id="modeChatBtn" onclick="setMode('chat')">Chat</button>
                 <button class="mode-btn" id="modeGCBtn" onclick="setMode('groupchat')">Group Chat</button>
             </div>
@@ -1281,8 +1281,10 @@ def dashboard():
             <div class="dots"><span></span><span></span><span></span></div>
             <span id="gcStatusText">In elaborazione...</span>
         </div>
-        <div class="gc-controls" id="gcControls">
+        <div id="gcStopWrap" style="display:none; padding:8px 24px; border-top:1px solid var(--border); background:var(--surface);">
             <button class="gc-btn danger" onclick="stopDebate()">Stop</button>
+        </div>
+        <div class="gc-controls" id="gcControls">
             <button class="gc-btn" onclick="summarizeDebate()">Sintesi</button>
             <button class="gc-btn primary" onclick="approveDebate()">Approvo</button>
             <button class="gc-btn" onclick="rejectDebate()">Non approvo</button>
@@ -1357,6 +1359,7 @@ async function newSession() {
 }
 async function openSession(sessionId, title) {
     currentSessionId = sessionId;
+    resetGCState();
     document.getElementById('sessionTitle').textContent = title || 'Sessione';
     document.getElementById('sessionTitle').classList.remove('placeholder');
     document.getElementById('sendBtn').disabled = false;
@@ -1448,6 +1451,7 @@ document.addEventListener('DOMContentLoaded', () => {
         gcInput.addEventListener('input', () => { gcInput.style.height = 'auto'; gcInput.style.height = Math.min(gcInput.scrollHeight, 140) + 'px'; });
     }
     loadSessions();
+    setMode('groupchat');
 });
 
 /* ── Group Chat JavaScript ── */
@@ -1516,6 +1520,29 @@ function stopPolling() {
     if (gcPollingInterval) { clearInterval(gcPollingInterval); gcPollingInterval = null; }
 }
 
+function updateStopVisibility() {
+    const stopWrap = document.getElementById('gcStopWrap');
+    if (stopWrap) stopWrap.style.display = currentDebateId ? 'flex' : 'none';
+}
+
+function resetGCState() {
+    stopPolling();
+    currentDebateId = null;
+    lastMessageId = 0;
+    document.getElementById('gcMessages').innerHTML = '';
+    document.getElementById('gcDecisionBox').style.display = 'none';
+    const gcDecisionAnswer = document.getElementById('gcDecisionAnswer');
+    if (gcDecisionAnswer) gcDecisionAnswer.value = '';
+    document.getElementById('gcDecisionQuestion').textContent = '';
+    document.getElementById('gcControls').classList.remove('visible');
+    document.getElementById('gcStatusBar').classList.remove('visible');
+    updateStopVisibility();
+    if (currentSessionId) {
+        document.getElementById('gcInputArea').style.display = 'flex';
+        document.getElementById('gcStart').style.display = 'none';
+    }
+}
+
 async function pollStatus() {
     if (!currentSessionId || !currentDebateId) return;
     try {
@@ -1559,14 +1586,13 @@ function handleDebateStatus(status, decisionQuestion) {
             decisionBox.style.display = 'none';
         } else if (status === 'stopped' || status === 'safety_limit') {
             controls.classList.add('visible');
-            // Rimostra input per nuovo debate
             gcInputArea.style.display = 'flex';
-            document.getElementById('gcStart').style.display = 'flex';
         } else if (status === 'error') {
             statusBar.classList.add('visible');
             statusText.textContent = 'Errore durante il dibattito. Consulta il log.';
         }
     }
+    updateStopVisibility();
 }
 
 async function startGroupChat(firstSpeaker) {
@@ -1575,8 +1601,7 @@ async function startGroupChat(firstSpeaker) {
         return;
     }
     const gcInputEl = document.getElementById('gcInput');
-    const chatInputEl = document.getElementById('chatInput');
-    const message = (gcInputEl.value || chatInputEl.value || '').trim();
+    const message = gcInputEl.value.trim();
     if (!message) { alert('Scrivi un messaggio prima di avviare il dibattito.'); return; }
 
     // Reset UI
@@ -1593,7 +1618,6 @@ async function startGroupChat(firstSpeaker) {
     statusBar.classList.add('visible');
     statusText.textContent = 'Dibattito avviato, attendo risposte...';
     gcInputEl.value = '';
-    chatInputEl.value = '';
 
     try {
         const res = await fetch(`/sessions/${currentSessionId}/group-chat`, {
@@ -1607,6 +1631,7 @@ async function startGroupChat(firstSpeaker) {
             return;
         }
         currentDebateId = data.debate_id;
+        updateStopVisibility();
         startPolling();
     } catch(e) {
         statusText.textContent = 'Errore di rete: ' + e.message;
@@ -1661,7 +1686,7 @@ async function approveDebate() {
     renderGCMessage({ speaker: 'system', content: 'Output approvato da Christian.', round_index: 0 });
     document.getElementById('gcControls').classList.remove('visible');
     currentDebateId = null;
-    document.getElementById('gcStart').style.display = 'flex';
+    updateStopVisibility();
     document.getElementById('gcInputArea').style.display = 'flex';
 }
 

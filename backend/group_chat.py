@@ -90,8 +90,24 @@ def build_group_chat_prompt(
         "Non trasformare ogni risposta in una consulenza diretta a Christian. "
         "Il tuo compito è migliorare il ragionamento dell'altro agente.\n\n"
         "Usa STATUS: DECIDI solo quando il dibattito non può proseguire senza una scelta reale di Christian.\n"
-        "Parti sempre dal contesto reale di Christian — non rispondere in astratto.\n"
+        "Parti sempre dal contesto reale di Christian — non rispondere in astratto.\n\n"
+        "REGOLE DI CONVERGENZA (obbligatorie):\n"
+        "- Se Christian ha scritto frasi come 'concludete voi', 'decidete voi', 'fate una proposta finale', "
+        "'scegliete voi', 'andate avanti voi' o simili: non fare altre domande. "
+        "Produci una proposta finale concreta e usa STATUS: PRONTO.\n"
+        "- Se nel dibattito sono già stati usati 2 o più STATUS: DECIDI: al prossimo turno NON usare "
+        "un altro STATUS: DECIDI. Produci invece una proposta finale ragionata con ciò che sai e usa STATUS: PRONTO.\n"
     )
+    if agent_name == "ChatGPT":
+        section1 += (
+            "- Non limitarti ad approvare le proposte di Claude. Identifica rischi, "
+            "debolezze o alternative che Claude non ha considerato.\n"
+        )
+    elif agent_name == "Claude":
+        section1 += (
+            "- Non fare troppe domande a Christian. Prima di usare STATUS: DECIDI, prova a risolvere "
+            "l'incertezza dialogando con ChatGPT e ragionando insieme.\n"
+        )
 
     # SEZIONE 2 — Contesto
     section2_parts = []
