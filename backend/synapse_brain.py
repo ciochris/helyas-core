@@ -142,6 +142,7 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_gcd_session_id
                 ON group_chat_debates(session_id)
         """)
+        cur.execute("ALTER TABLE group_chat_debates ADD COLUMN IF NOT EXISTS deciding_agent VARCHAR")
         cur.execute("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS project_id TEXT")
         cur.execute("SELECT content FROM user_profile WHERE id = 1")
         existing = cur.fetchone()
@@ -677,7 +678,8 @@ def group_chat(session_id):
                 conn.close()
                 return jsonify({"error": "Debate già in esecuzione"}), 409
 
-            next_agent = debate_row["next_agent"] or "gpt"
+            deciding_agent = debate_row.get("deciding_agent")
+            start_agent = deciding_agent if deciding_agent else (debate_row["next_agent"] or "gpt")
             round_index = debate_row["round_index"] or 0
 
             # Salva eventuale messaggio di Christian
@@ -687,21 +689,28 @@ def group_chat(session_id):
                     session_id=session_id,
                     debate_id=debate_id,
                     speaker="christian",
-                    target_agent=next_agent,
+                    target_agent=start_agent,
                     message_type="user_input",
                     content=message,
                     status=None,
                     round_index=round_index
                 )
 
-            # Riporta debate a running
-            update_debate_status(conn, debate_id, status="running")
+            # Riporta a running, azzera decision_question e deciding_agent
+            cur.execute(
+                """UPDATE group_chat_debates
+                   SET status='running', decision_question=NULL, deciding_agent=NULL,
+                       updated_at=NOW()
+                   WHERE debate_id=%s""",
+                (debate_id,)
+            )
+            conn.commit()
             cur.close()
             conn.close()
 
             threading.Thread(
                 target=run_group_chat_loop,
-                args=(session_id, debate_id, next_agent, 12, DATABASE_URL),
+                args=(session_id, debate_id, start_agent, 12, DATABASE_URL),
                 daemon=True
             ).start()
 
@@ -709,7 +718,7 @@ def group_chat(session_id):
                 "debate_id": debate_id,
                 "status": "running",
                 "round_index": round_index,
-                "next_agent": next_agent,
+                "next_agent": start_agent,
                 "messages": []
             })
 
@@ -1515,10 +1524,9 @@ async function pollStatus() {
         const data = await res.json();
         if (data.error) { stopPolling(); return; }
 
-        (data.messages || []).forEach(msg => {
-            renderGCMessage(msg);
-            if (msg.id > lastMessageId) lastMessageId = msg.id;
-        });
+        const msgs = data.messages || [];
+        msgs.forEach(msg => { if (msg.id > lastMessageId) lastMessageId = msg.id; });
+        msgs.forEach(msg => renderGCMessage(msg));
 
         handleDebateStatus(data.status, data.decision_question);
     } catch(e) {
@@ -1537,7 +1545,7 @@ function handleDebateStatus(status, decisionQuestion) {
         statusBar.classList.add('visible');
         statusText.textContent = 'Agenti in elaborazione...';
         controls.classList.remove('visible');
-        decisionBox.style.display = 'none';
+        if (decisionBox.style.display !== 'none') decisionBox.style.display = 'none';
     } else {
         stopPolling();
         statusBar.classList.remove('visible');
@@ -1686,7 +1694,6 @@ async function continueWithDecision() {
     if (!currentDebateId) return;
     const answer = document.getElementById('gcDecisionAnswer').value.trim();
     document.getElementById('gcDecisionBox').style.display = 'none';
-    if (answer) renderGCMessage({ speaker: 'christian', content: answer, round_index: 0 });
     document.getElementById('gcStatusBar').classList.add('visible');
     document.getElementById('gcStatusText').textContent = 'Riprendendo il dibattito...';
     try {

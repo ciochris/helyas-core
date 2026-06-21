@@ -191,7 +191,9 @@ def update_debate_status(
     status: str,
     next_agent=None,
     round_index=None,
-    decision_question=None
+    decision_question=None,
+    deciding_agent=None,
+    metadata=None
 ):
     fields = ["status = %s", "updated_at = NOW()"]
     values = [status]
@@ -205,6 +207,9 @@ def update_debate_status(
     if decision_question is not None:
         fields.append("decision_question = %s")
         values.append(decision_question)
+    if deciding_agent is not None:
+        fields.append("deciding_agent = %s")
+        values.append(deciding_agent)
 
     values.append(debate_id)
     cur = conn.cursor()
@@ -376,7 +381,8 @@ def run_group_chat_loop(
                     status="needs_decision",
                     next_agent=other_agent,
                     round_index=round_index,
-                    decision_question=decision_question
+                    decision_question=decision_question,
+                    deciding_agent=current_agent
                 )
                 print(f"[GROUP CHAT] Debate {debate_id} in attesa decisione: {decision_question}")
                 break
