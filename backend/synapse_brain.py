@@ -1262,7 +1262,7 @@ def dashboard():
     <!-- Group Chat Area -->
     <div class="gc-area" id="gcArea">
         <div class="gc-messages" id="gcMessages">
-            <div class="gc-start" id="gcStart">
+            <div class="gc-start" id="gcStart" style="display:none">
                 <div class="gc-start-label">Scegli chi inizia il dibattito</div>
                 <div class="gc-start-buttons">
                     <button class="gc-start-btn gpt" onclick="startGroupChat('gpt')">Parti con GPT</button>
@@ -1477,9 +1477,11 @@ function setMode(mode) {
         gcArea.style.display = 'flex';
         gcArea.style.flexDirection = 'column';
         document.getElementById('roundsSelect').style.display = 'none';
-        // Mostra input gc se c'è sessione attiva
         if (currentSessionId) {
             document.getElementById('gcInputArea').style.display = 'flex';
+            document.getElementById('gcStart').style.display = 'none';
+        } else {
+            document.getElementById('gcInputArea').style.display = 'none';
             document.getElementById('gcStart').style.display = 'none';
         }
     } else {
