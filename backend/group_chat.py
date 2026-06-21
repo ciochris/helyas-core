@@ -78,6 +78,18 @@ def build_group_chat_prompt(
 ) -> str:
     other_agent = "Claude" if agent_name == "ChatGPT" else "ChatGPT"
 
+    # SEZIONE 0 — Contesto vincolante (global_memory in cima, priorità massima)
+    section0 = ""
+    if global_memory:
+        section0 = (
+            "=== CONTESTO VINCOLANTE HELYAS / SOLUZIONE CASA ===\n"
+            "Leggi questo contesto PRIMA di rispondere.\n"
+            "Se una persona, un cantiere o una decisione è definita qui, "
+            "non trattarla come sconosciuta e non chiederla a Christian.\n"
+            f"{global_memory.strip()}\n"
+            "=== FINE CONTESTO VINCOLANTE ===\n\n"
+        )
+
     # SEZIONE 1 — Identità
     section1 = (
         f"Sei {agent_name} in una Group Chat sequenziale con {other_agent} e Christian Ciofi.\n"
@@ -91,6 +103,9 @@ def build_group_chat_prompt(
         "Il tuo compito è migliorare il ragionamento dell'altro agente.\n\n"
         "Usa STATUS: DECIDI solo quando il dibattito non può proseguire senza una scelta reale di Christian.\n"
         "Parti sempre dal contesto reale di Christian — non rispondere in astratto.\n\n"
+        "Prima di fare una domanda a Christian su persone, ruoli, cantieri o decisioni, controlla se "
+        "l'informazione è già nel CONTESTO VINCOLANTE. "
+        "Se Tommaso, Moki, Oleg o altri operatori sono definiti nel contesto, usali direttamente.\n\n"
         "REGOLE DI CONVERGENZA (obbligatorie):\n"
         "- IMPORTANTE: nei primi 2 round del debate NON usare mai STATUS: PRONTO. "
         "Usa sempre STATUS: CONTINUA per i primi 2 round, indipendentemente da quanto ti sembra completa "
@@ -155,7 +170,10 @@ def build_group_chat_prompt(
         "La riga STATUS deve essere l'ultima riga assoluta della tua risposta."
     )
 
-    parts = [section1]
+    parts = []
+    if section0:
+        parts.append(section0)
+    parts.append(section1)
     if section2:
         parts.append(section2)
     if section3:
