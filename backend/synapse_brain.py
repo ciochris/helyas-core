@@ -613,10 +613,10 @@ def group_chat(session_id):
             cur.close()
             conn.close()
 
-            # Avvia loop in background
+            # Avvia loop in background (max 4 round per il primo test — aumentare a 12 in produzione)
             threading.Thread(
                 target=run_group_chat_loop,
-                args=(session_id, debate_id, first_speaker, 12, DATABASE_URL),
+                args=(session_id, debate_id, first_speaker, 4, DATABASE_URL),
                 daemon=True
             ).start()
 
