@@ -614,10 +614,9 @@ def group_chat(session_id):
             cur.close()
             conn.close()
 
-            # Avvia loop in background (max 4 round per il primo test — aumentare a 12 in produzione)
             threading.Thread(
                 target=run_group_chat_loop,
-                args=(session_id, debate_id, first_speaker, 4, DATABASE_URL),
+                args=(session_id, debate_id, first_speaker, 8, DATABASE_URL),
                 daemon=True
             ).start()
 
@@ -1584,8 +1583,6 @@ async function startGroupChat(firstSpeaker) {
     const statusBar = document.getElementById('gcStatusBar');
     const statusText = document.getElementById('gcStatusText');
     statusBar.classList.add('visible');
-    statusText.textContent = (firstSpeaker === 'gpt' ? 'ChatGPT' : 'Claude') + ' sta iniziando...';
-
     statusText.textContent = 'Dibattito avviato, attendo risposte...';
     gcInputEl.value = '';
     chatInputEl.value = '';
@@ -1699,7 +1696,11 @@ async function continueWithDecision() {
             body: JSON.stringify({ action: 'continue', debate_id: currentDebateId, message: answer })
         });
         const data = await res.json();
-        if (!data.error) { document.getElementById('gcDecisionAnswer').value = ''; startPolling(); }
+        if (!data.error) {
+            document.getElementById('gcDecisionAnswer').value = '';
+            document.getElementById('gcDecisionQuestion').textContent = '';
+            startPolling();
+        }
     } catch(e) {
         document.getElementById('gcStatusText').textContent = 'Errore: ' + e.message;
     }

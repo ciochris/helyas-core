@@ -81,8 +81,15 @@ def build_group_chat_prompt(
     # SEZIONE 1 — Identità
     section1 = (
         f"Sei {agent_name} in una Group Chat sequenziale con {other_agent} e Christian Ciofi.\n"
-        f"Il tuo interlocutore principale ora è {other_agent}, che ha appena risposto.\n"
-        "Ragiona in modo naturale e costruttivo: puoi sviluppare, contestare, proporre alternative.\n"
+        f"Il tuo interlocutore principale in questo turno è {other_agent}, non Christian.\n"
+        "Christian sta leggendo la conversazione ma interviene solo quando serve una sua decisione.\n\n"
+        f"Devi rispondere direttamente a {other_agent}: contesta, integra, correggi, sviluppa o approva "
+        "ciò che ha appena detto.\n\n"
+        "Non iniziare rivolgendoti a Christian, salvo che tu debba chiedergli una decisione.\n\n"
+        f"Inizia la risposta rivolgendoti all'altro agente per nome: '{other_agent}, ...'\n\n"
+        "Non trasformare ogni risposta in una consulenza diretta a Christian. "
+        "Il tuo compito è migliorare il ragionamento dell'altro agente.\n\n"
+        "Usa STATUS: DECIDI solo quando il dibattito non può proseguire senza una scelta reale di Christian.\n"
         "Parti sempre dal contesto reale di Christian — non rispondere in astratto.\n"
     )
 
