@@ -104,6 +104,43 @@ def init_db():
                 updated_at TIMESTAMP DEFAULT NOW()
             )
         """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS group_chat_debates (
+                debate_id         UUID PRIMARY KEY,
+                session_id        TEXT REFERENCES sessions(id) ON DELETE CASCADE,
+                status            VARCHAR NOT NULL DEFAULT 'running',
+                current_agent     VARCHAR,
+                next_agent        VARCHAR,
+                round_index       INTEGER DEFAULT 0,
+                decision_question TEXT,
+                created_at        TIMESTAMP DEFAULT NOW(),
+                updated_at        TIMESTAMP DEFAULT NOW(),
+                metadata          JSONB DEFAULT '{}'
+            )
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS group_chat_messages (
+                id           SERIAL PRIMARY KEY,
+                session_id   TEXT REFERENCES sessions(id) ON DELETE CASCADE,
+                debate_id    UUID NOT NULL REFERENCES group_chat_debates(debate_id),
+                speaker      VARCHAR NOT NULL,
+                target_agent VARCHAR,
+                message_type VARCHAR NOT NULL,
+                content      TEXT NOT NULL,
+                status       VARCHAR,
+                round_index  INTEGER DEFAULT 0,
+                created_at   TIMESTAMP DEFAULT NOW(),
+                metadata     JSONB DEFAULT '{}'
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_gcm_debate_id
+                ON group_chat_messages(debate_id)
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_gcd_session_id
+                ON group_chat_debates(session_id)
+        """)
         cur.execute("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS project_id TEXT")
         cur.execute("SELECT content FROM user_profile WHERE id = 1")
         existing = cur.fetchone()
@@ -502,6 +539,357 @@ def chat(session_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+# ── Group Chat Mode ──────────────────────────────────────────────────────────
+
+@app.route("/sessions/<session_id>/group-chat", methods=["POST"])
+def group_chat(session_id):
+    try:
+        from backend.group_chat import (
+            save_debate_message, update_debate_status,
+            get_debate_messages, run_group_chat_loop
+        )
+        from backend.orchestrator import call_openai
+
+        data = request.get_json(force=True)
+        action = data.get("action", "").strip()
+
+        if not action:
+            return jsonify({"error": "Campo 'action' obbligatorio"}), 400
+
+        conn = get_db()
+        cur = conn.cursor()
+
+        # ── START ──────────────────────────────────────────────────────────────
+        if action == "start":
+            message = data.get("message", "").strip()
+            first_speaker = data.get("first_speaker", "").strip().lower()
+
+            if not message:
+                return jsonify({"error": "Campo 'message' obbligatorio per action=start"}), 400
+            if first_speaker not in ("gpt", "claude"):
+                return jsonify({"error": "first_speaker deve essere 'gpt' o 'claude'"}), 400
+
+            # Controlla debate già attivo
+            cur.execute(
+                """SELECT debate_id::text FROM group_chat_debates
+                   WHERE session_id = %s AND status = 'running'
+                   LIMIT 1""",
+                (session_id,)
+            )
+            existing = cur.fetchone()
+            if existing:
+                cur.close()
+                conn.close()
+                return jsonify({
+                    "error": "Esiste già un debate running per questa sessione",
+                    "debate_id": existing["debate_id"]
+                }), 409
+
+            debate_id = str(uuid.uuid4())
+            other_speaker = "claude" if first_speaker == "gpt" else "gpt"
+
+            # Crea record debate
+            cur.execute(
+                """INSERT INTO group_chat_debates
+                   (debate_id, session_id, status, current_agent, next_agent, round_index)
+                   VALUES (%s, %s, 'running', %s, %s, 0)""",
+                (debate_id, session_id, first_speaker, other_speaker)
+            )
+            conn.commit()
+
+            # Salva input Christian
+            save_debate_message(
+                conn=conn,
+                session_id=session_id,
+                debate_id=debate_id,
+                speaker="christian",
+                target_agent=first_speaker,
+                message_type="user_input",
+                content=message,
+                status=None,
+                round_index=0
+            )
+
+            cur.close()
+            conn.close()
+
+            # Avvia loop in background
+            threading.Thread(
+                target=run_group_chat_loop,
+                args=(session_id, debate_id, first_speaker, 12, DATABASE_URL),
+                daemon=True
+            ).start()
+
+            return jsonify({
+                "debate_id": debate_id,
+                "status": "running",
+                "round_index": 0,
+                "next_agent": first_speaker,
+                "messages": []
+            })
+
+        # ── STOP ──────────────────────────────────────────────────────────────
+        elif action == "stop":
+            debate_id = data.get("debate_id", "").strip()
+            if not debate_id:
+                return jsonify({"error": "Campo 'debate_id' obbligatorio"}), 400
+
+            update_debate_status(conn, debate_id, status="stopped")
+
+            save_debate_message(
+                conn=conn,
+                session_id=session_id,
+                debate_id=debate_id,
+                speaker="system",
+                target_agent=None,
+                message_type="final_output",
+                content="Dibattito fermato da Christian.",
+                status="stopped",
+                round_index=0
+            )
+
+            messages = get_debate_messages(conn, debate_id)
+            cur.close()
+            conn.close()
+            return jsonify({
+                "debate_id": debate_id,
+                "status": "stopped",
+                "messages": messages
+            })
+
+        # ── CONTINUE ──────────────────────────────────────────────────────────
+        elif action == "continue":
+            debate_id = data.get("debate_id", "").strip()
+            message = data.get("message", "").strip()
+            if not debate_id:
+                return jsonify({"error": "Campo 'debate_id' obbligatorio"}), 400
+
+            cur.execute(
+                "SELECT * FROM group_chat_debates WHERE debate_id = %s",
+                (debate_id,)
+            )
+            debate_row = cur.fetchone()
+            if not debate_row:
+                return jsonify({"error": "Debate non trovato"}), 404
+
+            if debate_row["status"] == "running":
+                cur.close()
+                conn.close()
+                return jsonify({"error": "Debate già in esecuzione"}), 409
+
+            next_agent = debate_row["next_agent"] or "gpt"
+            round_index = debate_row["round_index"] or 0
+
+            # Salva eventuale messaggio di Christian
+            if message:
+                save_debate_message(
+                    conn=conn,
+                    session_id=session_id,
+                    debate_id=debate_id,
+                    speaker="christian",
+                    target_agent=next_agent,
+                    message_type="user_input",
+                    content=message,
+                    status=None,
+                    round_index=round_index
+                )
+
+            # Riporta debate a running
+            update_debate_status(conn, debate_id, status="running")
+            cur.close()
+            conn.close()
+
+            threading.Thread(
+                target=run_group_chat_loop,
+                args=(session_id, debate_id, next_agent, 12, DATABASE_URL),
+                daemon=True
+            ).start()
+
+            return jsonify({
+                "debate_id": debate_id,
+                "status": "running",
+                "round_index": round_index,
+                "next_agent": next_agent,
+                "messages": []
+            })
+
+        # ── SUMMARIZE ─────────────────────────────────────────────────────────
+        elif action == "summarize":
+            debate_id = data.get("debate_id", "").strip()
+            if not debate_id:
+                return jsonify({"error": "Campo 'debate_id' obbligatorio"}), 400
+
+            messages = get_debate_messages(conn, debate_id)
+            if not messages:
+                cur.close()
+                conn.close()
+                return jsonify({"error": "Nessun messaggio nel debate"}), 404
+
+            history_text = "\n\n".join(
+                f"[{m['speaker'].upper()}] {m['content']}"
+                for m in messages
+                if m["message_type"] not in ("final_output",)
+            )
+
+            profile = get_user_profile()
+            summary_prompt = (
+                "Sei Helyas. Riassumi questo dibattito tra AI in modo diretto e utile per Christian Ciofi.\n\n"
+                f"PROFILO: {profile[:200]}\n\n"
+                f"DIBATTITO:\n{history_text[:3000]}\n\n"
+                "Scrivi una sintesi concisa (massimo 5 punti) delle conclusioni principali. "
+                "Evidenzia eventuali disaccordi o punti aperti. "
+                "Solo il testo della sintesi, niente altro."
+            )
+
+            synthesis = call_openai(summary_prompt)
+
+            save_debate_message(
+                conn=conn,
+                session_id=session_id,
+                debate_id=debate_id,
+                speaker="system",
+                target_agent=None,
+                message_type="final_output",
+                content=synthesis,
+                status="ready",
+                round_index=0
+            )
+
+            cur.close()
+            conn.close()
+            return jsonify({
+                "debate_id": debate_id,
+                "status": "ready",
+                "synthesis": synthesis
+            })
+
+        # ── APPROVE ───────────────────────────────────────────────────────────
+        elif action == "approve":
+            debate_id = data.get("debate_id", "").strip()
+            if not debate_id:
+                return jsonify({"error": "Campo 'debate_id' obbligatorio"}), 400
+
+            update_debate_status(conn, debate_id, status="ready")
+
+            messages = get_debate_messages(conn, debate_id)
+            full_content = " ".join(m["content"] for m in messages if m["speaker"] != "system")
+
+            cur.close()
+            conn.close()
+
+            # Aggiorna memoria globale in background
+            if full_content:
+                threading.Thread(
+                    target=update_global_memory_auto,
+                    args=(full_content[:1000], "Group Chat debate approvato"),
+                    daemon=True
+                ).start()
+
+            return jsonify({
+                "debate_id": debate_id,
+                "status": "approved"
+            })
+
+        # ── REJECT ────────────────────────────────────────────────────────────
+        elif action == "reject":
+            debate_id = data.get("debate_id", "").strip()
+            correction = data.get("correction", "").strip()
+            if not debate_id:
+                return jsonify({"error": "Campo 'debate_id' obbligatorio"}), 400
+
+            cur.execute(
+                "SELECT next_agent, round_index FROM group_chat_debates WHERE debate_id = %s",
+                (debate_id,)
+            )
+            debate_row = cur.fetchone()
+            next_agent = (debate_row["next_agent"] if debate_row else None) or "gpt"
+            round_index = (debate_row["round_index"] if debate_row else 0) or 0
+
+            if correction:
+                save_debate_message(
+                    conn=conn,
+                    session_id=session_id,
+                    debate_id=debate_id,
+                    speaker="christian",
+                    target_agent=next_agent,
+                    message_type="user_input",
+                    content=f"Non approvo. Correzione: {correction}",
+                    status=None,
+                    round_index=round_index
+                )
+
+            update_debate_status(conn, debate_id, status="running")
+            cur.close()
+            conn.close()
+
+            threading.Thread(
+                target=run_group_chat_loop,
+                args=(session_id, debate_id, next_agent, 6, DATABASE_URL),
+                daemon=True
+            ).start()
+
+            return jsonify({
+                "debate_id": debate_id,
+                "status": "running",
+                "next_agent": next_agent
+            })
+
+        else:
+            cur.close()
+            conn.close()
+            return jsonify({"error": f"Action '{action}' non riconosciuta"}), 400
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/sessions/<session_id>/group-chat/<debate_id>/status", methods=["GET"])
+def group_chat_status(session_id, debate_id):
+    try:
+        from backend.group_chat import get_debate_messages
+
+        after_id = request.args.get("after_id", None)
+        if after_id is not None:
+            try:
+                after_id = int(after_id)
+            except ValueError:
+                after_id = None
+
+        conn = get_db()
+        cur = conn.cursor()
+
+        cur.execute(
+            """SELECT debate_id::text, session_id, status, current_agent,
+                      next_agent, round_index, decision_question,
+                      created_at, updated_at
+               FROM group_chat_debates
+               WHERE debate_id = %s AND session_id = %s""",
+            (debate_id, session_id)
+        )
+        debate_row = cur.fetchone()
+        cur.close()
+        conn.close()
+
+        if not debate_row:
+            return jsonify({"error": "Debate non trovato"}), 404
+
+        conn2 = get_db()
+        messages = get_debate_messages(conn2, debate_id, after_id=after_id)
+        conn2.close()
+
+        result = dict(debate_row)
+        if result.get("created_at"):
+            result["created_at"] = result["created_at"].isoformat()
+        if result.get("updated_at"):
+            result["updated_at"] = result["updated_at"].isoformat()
+        result["messages"] = messages
+
+        return jsonify(result)
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 # ── API Progetti ──────────────────────────────────────────────────────────────
 
 @app.route("/projects", methods=["GET"])
@@ -772,6 +1160,47 @@ def dashboard():
         ::-webkit-scrollbar { width: 4px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+        /* ── Group Chat Mode ── */
+        :root { --gpt-color: #10a37f; --claude-color: #d97706; }
+        .mode-toggle { display: flex; gap: 4px; background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 3px; }
+        .mode-btn { padding: 5px 14px; border: none; border-radius: 6px; font-family: var(--font); font-size: 12px; font-weight: 600; cursor: pointer; background: transparent; color: var(--muted); transition: all 0.15s; }
+        .mode-btn.active { background: var(--accent); color: white; }
+        .gc-area { flex: 1; display: none; flex-direction: column; overflow: hidden; }
+        .gc-messages { flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 14px; }
+        .gc-msg { border-radius: 10px; padding: 14px 18px; font-size: 14px; line-height: 1.7; border-left: 3px solid transparent; background: var(--surface2); }
+        .gc-msg.christian { border-left-color: var(--text); }
+        .gc-msg.gpt { border-left-color: var(--gpt-color); }
+        .gc-msg.claude { border-left-color: var(--claude-color); }
+        .gc-msg.system { border-left-color: var(--muted); opacity: 0.7; font-style: italic; font-size: 13px; }
+        .gc-speaker-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; margin-bottom: 6px; }
+        .gc-speaker-label.christian { color: var(--text); }
+        .gc-speaker-label.gpt { color: var(--gpt-color); }
+        .gc-speaker-label.claude { color: var(--claude-color); }
+        .gc-speaker-label.system { color: var(--muted); }
+        .gc-round-badge { font-size: 10px; color: var(--muted); font-family: var(--mono); margin-left: 8px; font-weight: 400; }
+        .gc-status-bar { display: none; align-items: center; gap: 10px; padding: 10px 24px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--border); background: var(--surface); }
+        .gc-status-bar.visible { display: flex; }
+        .gc-controls { display: none; flex-wrap: wrap; gap: 8px; padding: 12px 24px; border-top: 1px solid var(--border); background: var(--surface); }
+        .gc-controls.visible { display: flex; }
+        .gc-btn { padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-family: var(--font); font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.15s; }
+        .gc-btn:hover { border-color: var(--accent); color: var(--accent); }
+        .gc-btn.primary { background: var(--accent); color: white; border-color: var(--accent); }
+        .gc-btn.primary:hover { opacity: 0.85; }
+        .gc-btn.danger { border-color: var(--red); color: var(--red); }
+        .gc-btn.danger:hover { background: var(--red); color: white; }
+        .gc-start { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; gap: 16px; padding: 32px; }
+        .gc-start-label { font-size: 13px; color: var(--muted); }
+        .gc-start-buttons { display: flex; gap: 12px; }
+        .gc-start-btn { padding: 12px 28px; border-radius: 10px; border: 1px solid var(--border); font-family: var(--font); font-size: 14px; font-weight: 700; cursor: pointer; transition: all 0.2s; }
+        .gc-start-btn.gpt { background: var(--gpt-color); color: white; border-color: var(--gpt-color); }
+        .gc-start-btn.gpt:hover { opacity: 0.85; }
+        .gc-start-btn.claude { background: var(--claude-color); color: white; border-color: var(--claude-color); }
+        .gc-start-btn.claude:hover { opacity: 0.85; }
+        .gc-decision-box { background: var(--surface2); border: 1px solid var(--amber); border-radius: 10px; padding: 14px 18px; margin: 0 24px 12px; font-size: 13px; }
+        .gc-decision-box .gc-decision-q { color: var(--amber); font-weight: 700; margin-bottom: 8px; }
+        .gc-decision-input { display: flex; gap: 8px; margin-top: 10px; }
+        .gc-decision-input textarea { flex: 1; padding: 8px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-family: var(--font); font-size: 13px; resize: none; outline: none; }
+        .gc-decision-input textarea:focus { border-color: var(--accent); }
     </style>
 </head>
 <body>
@@ -787,12 +1216,18 @@ def dashboard():
 <div class="main">
     <div class="topbar">
         <div class="session-title placeholder" id="sessionTitle">Seleziona o crea una sessione</div>
-        <select class="rounds-select" id="roundsSelect">
-            <option value="1">Rapida – 1 round</option>
-            <option value="2" selected>Standard – 2 round</option>
-            <option value="3">Approfondita – 3 round</option>
-            <option value="5">Completa – 5 round</option>
-        </select>
+        <div style="display:flex; gap:12px; align-items:center;">
+            <div class="mode-toggle">
+                <button class="mode-btn active" id="modeChatBtn" onclick="setMode('chat')">Chat</button>
+                <button class="mode-btn" id="modeGCBtn" onclick="setMode('groupchat')">Group Chat</button>
+            </div>
+            <select class="rounds-select" id="roundsSelect">
+                <option value="1">Rapida – 1 round</option>
+                <option value="2" selected>Standard – 2 round</option>
+                <option value="3">Approfondita – 3 round</option>
+                <option value="5">Completa – 5 round</option>
+            </select>
+        </div>
     </div>
     <div class="chat-area" id="chatArea">
         <div class="empty-state" id="emptyState">
@@ -804,11 +1239,49 @@ def dashboard():
         <div class="dots"><span></span><span></span><span></span></div>
         <span>Helyas sta elaborando...</span>
     </div>
-    <div class="input-area">
+    <div class="input-area" id="chatInputArea">
         <div class="input-wrapper">
             <textarea class="chat-input" id="chatInput" placeholder="Scrivi un task o una domanda..." rows="1"></textarea>
         </div>
         <button class="send-btn" id="sendBtn" onclick="sendMessage()" disabled>Avvia ▶</button>
+    </div>
+    <!-- Group Chat Area -->
+    <div class="gc-area" id="gcArea">
+        <div class="gc-messages" id="gcMessages">
+            <div class="gc-start" id="gcStart">
+                <div class="gc-start-label">Scegli chi inizia il dibattito</div>
+                <div class="gc-start-buttons">
+                    <button class="gc-start-btn gpt" onclick="startGroupChat('gpt')">Parti con GPT</button>
+                    <button class="gc-start-btn claude" onclick="startGroupChat('claude')">Parti con Claude</button>
+                </div>
+            </div>
+        </div>
+        <div class="gc-decision-box" id="gcDecisionBox" style="display:none">
+            <div class="gc-decision-q" id="gcDecisionQuestion"></div>
+            <div class="gc-decision-input">
+                <textarea id="gcDecisionAnswer" placeholder="La tua risposta..." rows="2"></textarea>
+                <button class="gc-btn primary" onclick="continueWithDecision()">Continua</button>
+            </div>
+        </div>
+        <div class="gc-status-bar" id="gcStatusBar">
+            <div class="dots"><span></span><span></span><span></span></div>
+            <span id="gcStatusText">In elaborazione...</span>
+        </div>
+        <div class="gc-controls" id="gcControls">
+            <button class="gc-btn danger" onclick="stopDebate()">Stop</button>
+            <button class="gc-btn" onclick="summarizeDebate()">Sintesi</button>
+            <button class="gc-btn primary" onclick="approveDebate()">Approvo</button>
+            <button class="gc-btn" onclick="rejectDebate()">Non approvo</button>
+        </div>
+        <div class="input-area" id="gcInputArea" style="display:none">
+            <div class="input-wrapper">
+                <textarea class="chat-input" id="gcInput" placeholder="Scrivi per Group Chat..." rows="1"></textarea>
+            </div>
+            <div style="display:flex; gap:8px;">
+                <button class="gc-start-btn gpt" style="padding:10px 16px; font-size:12px;" onclick="startGroupChat('gpt')">GPT</button>
+                <button class="gc-start-btn claude" style="padding:10px 16px; font-size:12px;" onclick="startGroupChat('claude')">Claude</button>
+            </div>
+        </div>
     </div>
 </div>
 <script>
@@ -956,8 +1429,277 @@ document.addEventListener('DOMContentLoaded', () => {
     const input = document.getElementById('chatInput');
     input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 140) + 'px'; });
     input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
+    const gcInput = document.getElementById('gcInput');
+    if (gcInput) {
+        gcInput.addEventListener('input', () => { gcInput.style.height = 'auto'; gcInput.style.height = Math.min(gcInput.scrollHeight, 140) + 'px'; });
+    }
     loadSessions();
 });
+
+/* ── Group Chat JavaScript ── */
+let currentDebateId = null;
+let gcPollingInterval = null;
+let lastMessageId = 0;
+let currentGCMode = false;
+
+function setMode(mode) {
+    currentGCMode = (mode === 'groupchat');
+    document.getElementById('modeChatBtn').classList.toggle('active', !currentGCMode);
+    document.getElementById('modeGCBtn').classList.toggle('active', currentGCMode);
+
+    const chatArea = document.getElementById('chatArea');
+    const chatThinking = document.getElementById('thinking');
+    const chatInputArea = document.getElementById('chatInputArea');
+    const gcArea = document.getElementById('gcArea');
+
+    if (currentGCMode) {
+        chatArea.style.display = 'none';
+        chatThinking.style.display = 'none';
+        chatInputArea.style.display = 'none';
+        gcArea.style.display = 'flex';
+        gcArea.style.flexDirection = 'column';
+        document.getElementById('roundsSelect').style.display = 'none';
+        // Mostra input gc se c'è sessione attiva
+        if (currentSessionId) {
+            document.getElementById('gcInputArea').style.display = 'flex';
+            document.getElementById('gcStart').style.display = 'none';
+        }
+    } else {
+        chatArea.style.display = 'flex';
+        chatArea.style.flexDirection = 'column';
+        chatThinking.style.display = '';
+        chatInputArea.style.display = 'flex';
+        gcArea.style.display = 'none';
+        document.getElementById('roundsSelect').style.display = '';
+    }
+}
+
+function renderGCMessage(msg) {
+    const container = document.getElementById('gcMessages');
+    // Rimuovi gc-start se presente
+    const startEl = document.getElementById('gcStart');
+    if (startEl) startEl.style.display = 'none';
+
+    const div = document.createElement('div');
+    const speaker = msg.speaker || 'system';
+    div.className = `gc-msg ${speaker}`;
+
+    const labelMap = { christian: 'Christian', gpt: 'ChatGPT', claude: 'Claude', system: 'Sistema' };
+    const label = labelMap[speaker] || speaker;
+    const roundBadge = (msg.round_index > 0) ? `<span class="gc-round-badge">round ${msg.round_index}</span>` : '';
+    const content = (msg.content || '').replace(/\n/g, '<br>');
+
+    div.innerHTML = `<div class="gc-speaker-label ${speaker}">${label}${roundBadge}</div><div>${content}</div>`;
+    container.appendChild(div);
+    container.scrollTop = container.scrollHeight;
+}
+
+function startPolling() {
+    if (gcPollingInterval) clearInterval(gcPollingInterval);
+    gcPollingInterval = setInterval(pollStatus, 2500);
+}
+
+function stopPolling() {
+    if (gcPollingInterval) { clearInterval(gcPollingInterval); gcPollingInterval = null; }
+}
+
+async function pollStatus() {
+    if (!currentSessionId || !currentDebateId) return;
+    try {
+        const url = `/sessions/${currentSessionId}/group-chat/${currentDebateId}/status?after_id=${lastMessageId}`;
+        const res = await fetch(url);
+        const data = await res.json();
+        if (data.error) { stopPolling(); return; }
+
+        (data.messages || []).forEach(msg => {
+            renderGCMessage(msg);
+            if (msg.id > lastMessageId) lastMessageId = msg.id;
+        });
+
+        handleDebateStatus(data.status, data.decision_question);
+    } catch(e) {
+        console.error('[GC Poll]', e);
+    }
+}
+
+function handleDebateStatus(status, decisionQuestion) {
+    const statusBar = document.getElementById('gcStatusBar');
+    const statusText = document.getElementById('gcStatusText');
+    const controls = document.getElementById('gcControls');
+    const decisionBox = document.getElementById('gcDecisionBox');
+    const gcInputArea = document.getElementById('gcInputArea');
+
+    if (status === 'running') {
+        statusBar.classList.add('visible');
+        statusText.textContent = 'Agenti in elaborazione...';
+        controls.classList.remove('visible');
+        decisionBox.style.display = 'none';
+    } else {
+        stopPolling();
+        statusBar.classList.remove('visible');
+
+        if (status === 'needs_decision') {
+            decisionBox.style.display = 'block';
+            document.getElementById('gcDecisionQuestion').textContent = decisionQuestion || 'Serve una tua decisione per continuare.';
+            controls.classList.remove('visible');
+        } else if (status === 'ready') {
+            controls.classList.add('visible');
+            decisionBox.style.display = 'none';
+        } else if (status === 'stopped' || status === 'safety_limit') {
+            controls.classList.add('visible');
+            // Rimostra input per nuovo debate
+            gcInputArea.style.display = 'flex';
+            document.getElementById('gcStart').style.display = 'flex';
+        } else if (status === 'error') {
+            statusBar.classList.add('visible');
+            statusText.textContent = 'Errore durante il dibattito. Consulta il log.';
+        }
+    }
+}
+
+async function startGroupChat(firstSpeaker) {
+    if (!currentSessionId) {
+        alert('Seleziona o crea una sessione prima di avviare Group Chat.');
+        return;
+    }
+    const gcInputEl = document.getElementById('gcInput');
+    const chatInputEl = document.getElementById('chatInput');
+    const message = (gcInputEl.value || chatInputEl.value || '').trim();
+    if (!message) { alert('Scrivi un messaggio prima di avviare il dibattito.'); return; }
+
+    // Reset UI
+    lastMessageId = 0;
+    currentDebateId = null;
+    document.getElementById('gcMessages').innerHTML = '';
+    document.getElementById('gcDecisionBox').style.display = 'none';
+    document.getElementById('gcControls').classList.remove('visible');
+    document.getElementById('gcInputArea').style.display = 'none';
+
+    // Mostra stato
+    const statusBar = document.getElementById('gcStatusBar');
+    const statusText = document.getElementById('gcStatusText');
+    statusBar.classList.add('visible');
+    statusText.textContent = (firstSpeaker === 'gpt' ? 'ChatGPT' : 'Claude') + ' sta iniziando...';
+
+    // Render messaggio Christian
+    renderGCMessage({ speaker: 'christian', content: message, round_index: 0 });
+    gcInputEl.value = '';
+    chatInputEl.value = '';
+
+    try {
+        const res = await fetch(`/sessions/${currentSessionId}/group-chat`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ action: 'start', message, first_speaker: firstSpeaker })
+        });
+        const data = await res.json();
+        if (data.error) {
+            statusText.textContent = 'Errore: ' + data.error;
+            return;
+        }
+        currentDebateId = data.debate_id;
+        startPolling();
+    } catch(e) {
+        statusText.textContent = 'Errore di rete: ' + e.message;
+    }
+}
+
+async function stopDebate() {
+    if (!currentDebateId) return;
+    stopPolling();
+    try {
+        await fetch(`/sessions/${currentSessionId}/group-chat`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ action: 'stop', debate_id: currentDebateId })
+        });
+    } catch(e) { console.error(e); }
+    handleDebateStatus('stopped', null);
+    renderGCMessage({ speaker: 'system', content: 'Dibattito fermato.', round_index: 0 });
+}
+
+async function summarizeDebate() {
+    if (!currentDebateId) return;
+    document.getElementById('gcStatusBar').classList.add('visible');
+    document.getElementById('gcStatusText').textContent = 'Generazione sintesi...';
+    document.getElementById('gcControls').classList.remove('visible');
+    try {
+        const res = await fetch(`/sessions/${currentSessionId}/group-chat`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ action: 'summarize', debate_id: currentDebateId })
+        });
+        const data = await res.json();
+        document.getElementById('gcStatusBar').classList.remove('visible');
+        if (data.synthesis) {
+            renderGCMessage({ speaker: 'system', content: data.synthesis, round_index: 0 });
+        }
+        document.getElementById('gcControls').classList.add('visible');
+    } catch(e) {
+        document.getElementById('gcStatusText').textContent = 'Errore sintesi: ' + e.message;
+    }
+}
+
+async function approveDebate() {
+    if (!currentDebateId) return;
+    try {
+        await fetch(`/sessions/${currentSessionId}/group-chat`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ action: 'approve', debate_id: currentDebateId })
+        });
+    } catch(e) { console.error(e); }
+    renderGCMessage({ speaker: 'system', content: 'Output approvato da Christian.', round_index: 0 });
+    document.getElementById('gcControls').classList.remove('visible');
+    currentDebateId = null;
+    document.getElementById('gcStart').style.display = 'flex';
+    document.getElementById('gcInputArea').style.display = 'flex';
+}
+
+async function rejectDebate() {
+    if (!currentDebateId) return;
+    const correction = prompt('Cosa vuoi correggere o aggiungere?', '');
+    if (correction === null) return;
+    document.getElementById('gcStatusBar').classList.add('visible');
+    document.getElementById('gcStatusText').textContent = 'Riprendendo il dibattito...';
+    document.getElementById('gcControls').classList.remove('visible');
+    if (correction.trim()) {
+        renderGCMessage({ speaker: 'christian', content: 'Non approvo. ' + correction, round_index: 0 });
+    }
+    lastMessageId = 0;
+    try {
+        const res = await fetch(`/sessions/${currentSessionId}/group-chat`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ action: 'reject', debate_id: currentDebateId, correction })
+        });
+        const data = await res.json();
+        if (!data.error) startPolling();
+        else document.getElementById('gcStatusText').textContent = 'Errore: ' + data.error;
+    } catch(e) {
+        document.getElementById('gcStatusText').textContent = 'Errore: ' + e.message;
+    }
+}
+
+async function continueWithDecision() {
+    if (!currentDebateId) return;
+    const answer = document.getElementById('gcDecisionAnswer').value.trim();
+    document.getElementById('gcDecisionBox').style.display = 'none';
+    if (answer) renderGCMessage({ speaker: 'christian', content: answer, round_index: 0 });
+    document.getElementById('gcStatusBar').classList.add('visible');
+    document.getElementById('gcStatusText').textContent = 'Riprendendo il dibattito...';
+    try {
+        const res = await fetch(`/sessions/${currentSessionId}/group-chat`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ action: 'continue', debate_id: currentDebateId, message: answer })
+        });
+        const data = await res.json();
+        if (!data.error) { document.getElementById('gcDecisionAnswer').value = ''; startPolling(); }
+    } catch(e) {
+        document.getElementById('gcStatusText').textContent = 'Errore: ' + e.message;
+    }
+}
 </script>
 </body>
 </html>
