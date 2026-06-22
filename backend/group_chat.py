@@ -341,7 +341,12 @@ def run_group_chat_loop(
 
         current_agent = first_agent  # "gpt" o "claude"
         other_agent = "claude" if current_agent == "gpt" else "gpt"
-        round_index = 1  # round 0 = input Christian
+
+        # Legge round_index attuale dal DB per continuare da dove si era fermato
+        round_row = _query_one(
+            "SELECT round_index FROM group_chat_debates WHERE debate_id = %s", (debate_id,)
+        )
+        round_index = (round_row["round_index"] or 0) + 1
 
         agent_name_map = {"gpt": "ChatGPT", "claude": "Claude"}
 
