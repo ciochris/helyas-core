@@ -93,10 +93,7 @@ def build_group_chat_prompt(
         )
 
     # SEZIONE 1 — Identità
-    revision_prefix = ""
-    if revision_note:
-        revision_prefix = f"ISTRUZIONE CICLO DI REVISIONE:\n{revision_note}\n\n"
-    section1 = revision_prefix + (
+    section1 = (
         f"Sei {agent_name} in una Group Chat sequenziale con {other_agent} e Christian Ciofi.\n"
         f"Il tuo interlocutore principale in questo turno è {other_agent}, non Christian.\n"
         "Christian sta leggendo la conversazione ma interviene solo quando serve una sua decisione.\n\n"
@@ -181,6 +178,8 @@ def build_group_chat_prompt(
     )
 
     parts = []
+    if revision_note:
+        parts.append(revision_note)
     if section0:
         parts.append(section0)
     parts.append(section1)
@@ -389,11 +388,46 @@ def run_group_chat_loop(
                 )
             revision_note = None
             if current_cycle > 0:
+                prev_cycle = current_cycle - 1
+                cycle_summary_msg = next(
+                    (m for m in reversed(history)
+                     if m.get("message_type") == "cycle_summary"
+                     and m.get("revision_cycle") == prev_cycle),
+                    None
+                )
+                correction_msg = next(
+                    (m for m in reversed(history)
+                     if m.get("speaker") == "christian"
+                     and m.get("revision_cycle") == current_cycle),
+                    None
+                )
+                cycle_summary_text = (
+                    cycle_summary_msg["content"].strip() if cycle_summary_msg else "Non disponibile."
+                )
+                correction_text = (correction_msg["content"] or "").strip() if correction_msg else "Non specificata."
+                if correction_text.startswith("Non approvo. Correzione: "):
+                    correction_text = correction_text[len("Non approvo. Correzione: "):]
+                other_display = agent_name_map.get(other_agent, other_agent)
                 revision_note = (
-                    "Rielaborate la proposta tenendo conto della motivazione di Christian. "
-                    "Non ripetete semplicemente la proposta precedente. "
-                    "La storia del dibattito include la sintesi del ciclo precedente "
-                    "e il feedback di Christian."
+                    "ISTRUZIONE PRIORITARIA ASSOLUTA — CICLO DI REVISIONE\n\n"
+                    "Christian ha rifiutato la proposta precedente.\n\n"
+                    f"MOTIVO DEL RIFIUTO:\n\"{correction_text}\"\n\n"
+                    "La proposta precedente NON è approvata.\n"
+                    "Non devi difenderla, ripeterla o riformularla con parole diverse.\n\n"
+                    "Devi produrre una proposta sostanzialmente diversa che risolva il motivo del rifiuto.\n\n"
+                    "Prima di rispondere, identifica cosa va cambiato.\n"
+                    "Nella risposta devi rendere evidente almeno una modifica concreta rispetto al ciclo precedente.\n\n"
+                    "Se il motivo è \"voglio una soluzione più semplice\":\n"
+                    "- riduci il numero di passaggi\n"
+                    "- riduci il carico operativo\n"
+                    "- elimina elementi non indispensabili\n"
+                    "- proponi una versione più breve e diretta\n\n"
+                    "Se ripeti la proposta precedente, la risposta è sbagliata.\n\n"
+                    f"PROPOSTA PRECEDENTE RIFIUTATA — NON RIPETERE:\n{cycle_summary_text}\n\n"
+                    "NUOVO COMPITO:\n"
+                    "Rielabora la proposta. Nel primo messaggio del ciclo devi obbligatoriamente iniziare "
+                    "citando il motivo del reject, ad esempio:\n"
+                    f"\"{other_display}, Christian ha rifiutato perché [motivo]. Quindi...\""
                 )
             prompt = build_group_chat_prompt(
                 agent_display, history, global_memory, project_memory, user_profile,
