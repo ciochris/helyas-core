@@ -205,36 +205,31 @@ def get_global_memory():
 def update_global_memory_auto(session_synthesis, user_message):
     try:
         from backend.orchestrator import call_openai
+        from datetime import datetime
         current = get_global_memory()
-        profile = get_user_profile()
         prompt = (
-            "Sei il sistema di memoria di Helyas, un assistente AI personale.\n\n"
-            "PROFILO BASE UTENTE:\n" + profile + "\n\n"
-            "MEMORIA GLOBALE ATTUALE (quello che hai imparato finora):\n" +
-            (current if current else "(nessuna memoria ancora)") + "\n\n"
-            "NUOVA CONVERSAZIONE:\n"
-            "Domanda utente: " + user_message[:300] + "\n"
-            "Risposta Helyas: " + session_synthesis[:500] + "\n\n"
-            "Aggiorna la memoria globale integrando le nuove informazioni rilevanti. "
-            "Includi: persone menzionate, decisioni prese, problemi emersi, preferenze, "
-            "contesto aziendale, progetti in corso. "
-            "NON includere dati statici gia nel profilo base (nome, P.IVA, sede). "
-            "Scrivi in modo denso e informativo. Massimo 1500 parole. "
-            "Solo il testo della memoria aggiornata, niente altro."
+            "Estrai le decisioni concrete da questo debate in massimo 5 righe, formato:\n"
+            "- [DECISIONE] testo\n"
+            "Solo le decisioni, niente altro.\n\n"
+            + session_synthesis[:1000]
         )
-        updated = call_openai(prompt)
-        if updated and "ERROR" not in updated:
-            conn = get_db()
-            cur = conn.cursor()
-            cur.execute("""
-                INSERT INTO global_memory (id, content, updated_at)
-                VALUES (1, %s, NOW())
-                ON CONFLICT (id) DO UPDATE SET content = %s, updated_at = NOW()
-            """, (updated, updated))
-            conn.commit()
-            cur.close()
-            conn.close()
-            print("[GLOBAL MEMORY] Aggiornata con successo")
+        delta = call_openai(prompt)
+        if not delta or "ERROR" in delta:
+            print("[GLOBAL MEMORY] Delta non generato, skip aggiornamento")
+            return
+        data_ora = datetime.now().strftime("%Y-%m-%d %H:%M")
+        new_content = (current or "") + f"\n\n--- AGGIORNAMENTO {data_ora} ---\n" + delta.strip()
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO global_memory (id, content, updated_at)
+            VALUES (1, %s, NOW())
+            ON CONFLICT (id) DO UPDATE SET content = %s, updated_at = NOW()
+        """, (new_content, new_content))
+        conn.commit()
+        cur.close()
+        conn.close()
+        print(f"[GLOBAL MEMORY] Delta appeso ({len(delta)} char)")
     except Exception as e:
         print(f"[GLOBAL MEMORY UPDATE ERROR] {e}")
 
