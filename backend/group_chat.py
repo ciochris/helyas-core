@@ -75,7 +75,8 @@ def build_group_chat_prompt(
     global_memory: str,
     project_memory: str,
     user_profile: str,
-    pending_ready_note: str = None
+    pending_ready_note: str = None,
+    revision_note: str = None
 ) -> str:
     other_agent = "Claude" if agent_name == "ChatGPT" else "ChatGPT"
 
@@ -92,7 +93,10 @@ def build_group_chat_prompt(
         )
 
     # SEZIONE 1 — Identità
-    section1 = (
+    revision_prefix = ""
+    if revision_note:
+        revision_prefix = f"ISTRUZIONE CICLO DI REVISIONE:\n{revision_note}\n\n"
+    section1 = revision_prefix + (
         f"Sei {agent_name} in una Group Chat sequenziale con {other_agent} e Christian Ciofi.\n"
         f"Il tuo interlocutore principale in questo turno è {other_agent}, non Christian.\n"
         "Christian sta leggendo la conversazione ma interviene solo quando serve una sua decisione.\n\n"
@@ -201,14 +205,15 @@ def save_debate_message(
     content: str,
     status,
     round_index: int,
-    metadata: dict = None
+    metadata: dict = None,
+    revision_cycle: int = 0
 ) -> int:
     cur = conn.cursor()
     cur.execute(
         """INSERT INTO group_chat_messages
            (session_id, debate_id, speaker, target_agent, message_type,
-            content, status, round_index, metadata)
-           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            content, status, round_index, metadata, revision_cycle)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
            RETURNING id""",
         (
             session_id,
@@ -219,7 +224,8 @@ def save_debate_message(
             content,
             status,
             round_index,
-            json.dumps(metadata or {})
+            json.dumps(metadata or {}),
+            revision_cycle
         )
     )
     msg_id = cur.fetchone()["id"]
@@ -270,7 +276,7 @@ def get_debate_messages(conn, debate_id: str, after_id: int = None) -> list:
         cur.execute(
             """SELECT id, session_id, debate_id::text, speaker, target_agent,
                       message_type, content, status, round_index,
-                      created_at, metadata
+                      created_at, metadata, revision_cycle
                FROM group_chat_messages
                WHERE debate_id = %s AND id > %s
                ORDER BY round_index ASC, created_at ASC""",
@@ -280,7 +286,7 @@ def get_debate_messages(conn, debate_id: str, after_id: int = None) -> list:
         cur.execute(
             """SELECT id, session_id, debate_id::text, speaker, target_agent,
                       message_type, content, status, round_index,
-                      created_at, metadata
+                      created_at, metadata, revision_cycle
                FROM group_chat_messages
                WHERE debate_id = %s
                ORDER BY round_index ASC, created_at ASC""",
@@ -348,11 +354,13 @@ def run_group_chat_loop(
         current_agent = first_agent  # "gpt" o "claude"
         other_agent = "claude" if current_agent == "gpt" else "gpt"
 
-        # Legge round_index attuale dal DB per continuare da dove si era fermato
-        round_row = _query_one(
-            "SELECT round_index FROM group_chat_debates WHERE debate_id = %s", (debate_id,)
+        # Legge round_index e revision_cycle dal DB
+        debate_meta = _query_one(
+            "SELECT round_index, revision_cycle FROM group_chat_debates WHERE debate_id = %s",
+            (debate_id,)
         )
-        round_index = (round_row["round_index"] or 0) + 1
+        round_index = (debate_meta["round_index"] or 0) + 1
+        current_cycle = debate_meta["revision_cycle"] or 0
 
         agent_name_map = {"gpt": "ChatGPT", "claude": "Claude"}
         pending_ready_agent = None
@@ -379,9 +387,18 @@ def run_group_chat_loop(
                     f"Puoi confermare con STATUS: PRONTO se sei d'accordo, "
                     f"oppure contestare con STATUS: CONTINUA se vedi problemi."
                 )
+            revision_note = None
+            if current_cycle > 0:
+                revision_note = (
+                    "Rielaborate la proposta tenendo conto della motivazione di Christian. "
+                    "Non ripetete semplicemente la proposta precedente. "
+                    "La storia del dibattito include la sintesi del ciclo precedente "
+                    "e il feedback di Christian."
+                )
             prompt = build_group_chat_prompt(
                 agent_display, history, global_memory, project_memory, user_profile,
-                pending_ready_note=pending_ready_note
+                pending_ready_note=pending_ready_note,
+                revision_note=revision_note
             )
 
             # Chiama API
@@ -429,7 +446,8 @@ def run_group_chat_loop(
                 content=clean_text,
                 status=db_status,
                 round_index=round_index,
-                metadata={"execution_time": exec_time}
+                metadata={"execution_time": exec_time},
+                revision_cycle=current_cycle
             )
 
             # Aggiorna stato debate
@@ -486,7 +504,8 @@ def run_group_chat_loop(
                 content=f"Safety limit raggiunto dopo {max_rounds} round. Usa 'Sintesi' per un riepilogo.",
                 status="safety_limit",
                 round_index=round_index,
-                metadata={}
+                metadata={},
+                revision_cycle=current_cycle
             )
             update_debate_status(
                 conn, debate_id,

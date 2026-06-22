@@ -143,6 +143,8 @@ def init_db():
                 ON group_chat_debates(session_id)
         """)
         cur.execute("ALTER TABLE group_chat_debates ADD COLUMN IF NOT EXISTS deciding_agent VARCHAR")
+        cur.execute("ALTER TABLE group_chat_debates ADD COLUMN IF NOT EXISTS revision_cycle INTEGER DEFAULT 0")
+        cur.execute("ALTER TABLE group_chat_messages ADD COLUMN IF NOT EXISTS revision_cycle INTEGER DEFAULT 0")
         cur.execute("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS project_id TEXT")
         cur.execute("SELECT content FROM user_profile WHERE id = 1")
         existing = cur.fetchone()
@@ -732,7 +734,7 @@ def group_chat(session_id):
             history_text = "\n\n".join(
                 f"[{m['speaker'].upper()}] {m['content']}"
                 for m in messages
-                if m["message_type"] not in ("final_output",)
+                if m["message_type"] not in ("final_output", "cycle_summary")
             )
 
             summary_prompt = (
@@ -807,13 +809,74 @@ def group_chat(session_id):
                 return jsonify({"error": "Campo 'debate_id' obbligatorio"}), 400
 
             cur.execute(
-                "SELECT next_agent, round_index FROM group_chat_debates WHERE debate_id = %s",
+                "SELECT next_agent, revision_cycle FROM group_chat_debates WHERE debate_id = %s",
                 (debate_id,)
             )
             debate_row = cur.fetchone()
-            next_agent = (debate_row["next_agent"] if debate_row else None) or "gpt"
-            round_index = (debate_row["round_index"] if debate_row else 0) or 0
+            if not debate_row:
+                return jsonify({"error": "Debate non trovato"}), 404
 
+            next_agent = (debate_row["next_agent"] or "gpt")
+            current_cycle = debate_row["revision_cycle"] or 0
+
+            # Sintesi provvisoria del ciclo corrente
+            all_messages = get_debate_messages(conn, debate_id)
+            cycle_msgs = [
+                m for m in all_messages
+                if m.get("revision_cycle") == current_cycle
+                and m["speaker"] in ("gpt", "claude")
+            ]
+            cycle_history_text = "\n\n".join(
+                f"[{m['speaker'].upper()}] {m['content']}"
+                for m in cycle_msgs[-8:]
+            ) if cycle_msgs else ""
+
+            synthesis_content = ""
+            if cycle_history_text:
+                try:
+                    from backend.orchestrator import call_openai
+                    summary_prompt = (
+                        "Produci una sintesi breve (max 5 righe) delle proposte principali "
+                        "emerse in questo ciclo di dibattito. Formato:\n"
+                        "- [PROPOSTA] testo\n"
+                        f"Solo le proposte concrete. Niente altro.\n\nDIBATTITO:\n{cycle_history_text[:2000]}"
+                    )
+                    result = call_openai(summary_prompt)
+                    if result and "ERROR" not in result:
+                        synthesis_content = result
+                except Exception as e:
+                    print(f"[REJECT] Sintesi ciclo fallita: {e}")
+
+            if not synthesis_content:
+                synthesis_content = cycle_history_text[:500] if cycle_history_text else "Ciclo senza proposte registrate."
+
+            # Salva cycle_summary per il ciclo corrente
+            save_debate_message(
+                conn=conn,
+                session_id=session_id,
+                debate_id=debate_id,
+                speaker="system",
+                target_agent=None,
+                message_type="cycle_summary",
+                content=synthesis_content,
+                status=None,
+                round_index=0,
+                revision_cycle=current_cycle
+            )
+
+            new_cycle = current_cycle + 1
+
+            # Incrementa ciclo, resetta round_index, riporta a running
+            cur.execute(
+                """UPDATE group_chat_debates
+                   SET revision_cycle = %s, round_index = 0, status = 'running',
+                       decision_question = NULL, deciding_agent = NULL, updated_at = NOW()
+                   WHERE debate_id = %s""",
+                (new_cycle, debate_id)
+            )
+            conn.commit()
+
+            # Salva motivazione reject di Christian nel nuovo ciclo
             if correction:
                 save_debate_message(
                     conn=conn,
@@ -824,23 +887,24 @@ def group_chat(session_id):
                     message_type="user_input",
                     content=f"Non approvo. Correzione: {correction}",
                     status=None,
-                    round_index=round_index
+                    round_index=0,
+                    revision_cycle=new_cycle
                 )
 
-            update_debate_status(conn, debate_id, status="running")
             cur.close()
             conn.close()
 
             threading.Thread(
                 target=run_group_chat_loop,
-                args=(session_id, debate_id, next_agent, 6, DATABASE_URL),
+                args=(session_id, debate_id, next_agent, 10, DATABASE_URL),
                 daemon=True
             ).start()
 
             return jsonify({
                 "debate_id": debate_id,
                 "status": "running",
-                "next_agent": next_agent
+                "next_agent": next_agent,
+                "revision_cycle": new_cycle
             })
 
         else:
@@ -1181,6 +1245,8 @@ def dashboard():
         .gc-msg.gpt { border-left-color: var(--gpt-color); }
         .gc-msg.claude { border-left-color: var(--claude-color); }
         .gc-msg.system { border-left-color: var(--muted); opacity: 0.7; font-style: italic; font-size: 13px; }
+        .gc-cycle-separator { padding: 12px 24px; text-align: center; }
+        .gc-cycle-label { display: inline-block; padding: 4px 16px; font-size: 12px; color: var(--muted); border: 1px solid var(--border); border-radius: 20px; background: var(--surface); }
         .gc-speaker-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; margin-bottom: 6px; }
         .gc-speaker-label.christian { color: var(--text); }
         .gc-speaker-label.gpt { color: var(--gpt-color); }
@@ -1491,18 +1557,24 @@ function setMode(mode) {
 
 function renderGCMessage(msg) {
     const container = document.getElementById('gcMessages');
-    // Rimuovi gc-start se presente
     const startEl = document.getElementById('gcStart');
     if (startEl) startEl.style.display = 'none';
 
     const div = document.createElement('div');
+
+    if (msg.message_type === 'cycle_summary') {
+        div.className = 'gc-cycle-separator';
+        div.innerHTML = '<div class="gc-cycle-label">↻ Revisione dopo feedback di Christian</div>';
+        container.appendChild(div);
+        container.scrollTop = container.scrollHeight;
+        return;
+    }
+
     const speaker = msg.speaker || 'system';
     div.className = `gc-msg ${speaker}`;
-
     const labelMap = { christian: 'Christian', gpt: 'ChatGPT', claude: 'Claude', system: 'Sistema' };
     const label = labelMap[speaker] || speaker;
     const content = (msg.content || '').replace(/\n/g, '<br>');
-
     div.innerHTML = `<div class="gc-speaker-label ${speaker}">${label}</div><div>${content}</div>`;
     container.appendChild(div);
     container.scrollTop = container.scrollHeight;
