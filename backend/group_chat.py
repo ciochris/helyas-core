@@ -74,7 +74,8 @@ def build_group_chat_prompt(
     history: list,
     global_memory: str,
     project_memory: str,
-    user_profile: str
+    user_profile: str,
+    pending_ready_note: str = None
 ) -> str:
     other_agent = "Claude" if agent_name == "ChatGPT" else "ChatGPT"
 
@@ -151,7 +152,12 @@ def build_group_chat_prompt(
         }
         label = label_map.get(speaker, speaker.capitalize())
         history_lines.append(f"[Round {round_idx}] {label}: {content}")
-    section3 = "STORIA DEL DIBATTITO:\n" + "\n\n".join(history_lines) if history_lines else ""
+    if history_lines:
+        section3 = "STORIA DEL DIBATTITO:\n" + "\n\n".join(history_lines)
+        if pending_ready_note:
+            section3 += "\n\n" + pending_ready_note
+    else:
+        section3 = pending_ready_note or ""
 
     # SEZIONE 4 — Istruzioni formato (rigide)
     section4 = (
@@ -349,6 +355,7 @@ def run_group_chat_loop(
         round_index = (round_row["round_index"] or 0) + 1
 
         agent_name_map = {"gpt": "ChatGPT", "claude": "Claude"}
+        pending_ready_agent = None
 
         while round_index <= max_rounds:
             # Verifica che il debate non sia stato fermato esternamente
@@ -364,8 +371,17 @@ def run_group_chat_loop(
 
             # Costruisce prompt
             agent_display = agent_name_map.get(current_agent, current_agent)
+            pending_ready_note = None
+            if pending_ready_agent is not None and pending_ready_agent != current_agent:
+                proposer_name = agent_name_map.get(pending_ready_agent, pending_ready_agent)
+                pending_ready_note = (
+                    f"NOTA: {proposer_name} ha proposto la chiusura del debate con una proposta finale. "
+                    f"Puoi confermare con STATUS: PRONTO se sei d'accordo, "
+                    f"oppure contestare con STATUS: CONTINUA se vedi problemi."
+                )
             prompt = build_group_chat_prompt(
-                agent_display, history, global_memory, project_memory, user_profile
+                agent_display, history, global_memory, project_memory, user_profile,
+                pending_ready_note=pending_ready_note
             )
 
             # Chiama API
@@ -430,16 +446,25 @@ def run_group_chat_loop(
                 break
 
             if status == "ready":
-                update_debate_status(
-                    conn, debate_id,
-                    status="ready",
-                    next_agent=None,
-                    round_index=round_index
-                )
-                print(f"[GROUP CHAT] Debate {debate_id} completato al round {round_index}")
-                break
+                if pending_ready_agent is None:
+                    # Primo PRONTO: aspetta conferma dell'altro agente
+                    pending_ready_agent = current_agent
+                    print(f"[GROUP CHAT] {current_agent} propone chiusura, attendo conferma di {other_agent}")
+                elif pending_ready_agent != current_agent:
+                    # Doppia conferma: chiudi il debate
+                    update_debate_status(
+                        conn, debate_id,
+                        status="ready",
+                        next_agent=None,
+                        round_index=round_index
+                    )
+                    print(f"[GROUP CHAT] Debate {debate_id} convergenza doppia confermata al round {round_index}")
+                    break
+            else:
+                # STATUS: CONTINUA → reset pending
+                pending_ready_agent = None
 
-            # Continua: aggiorna round e switch agente
+            # Continua (anche dopo primo PRONTO): switch agente e incrementa round
             update_debate_status(
                 conn, debate_id,
                 status="running",
