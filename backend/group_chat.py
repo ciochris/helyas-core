@@ -180,7 +180,9 @@ def build_group_chat_prompt(
         parts.append(section3)
     parts.append(section4)
 
-    return "\n\n".join(parts)
+    prompt = "\n\n".join(parts)
+    print(f"[GC PROMPT] {prompt[:3000]}")
+    return prompt
 
 
 # ── DB helpers ────────────────────────────────────────────────────────────────
