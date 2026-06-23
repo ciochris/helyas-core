@@ -338,6 +338,21 @@ def get_debate_messages(conn, debate_id: str, after_id: int = None) -> list:
     return rows
 
 
+def agent_has_spoken_in_cycle(conn, debate_id: str, agent: str, revision_cycle: int) -> bool:
+    cur = conn.cursor()
+    cur.execute(
+        """SELECT COUNT(*) as cnt FROM group_chat_messages
+           WHERE debate_id = %s
+           AND revision_cycle = %s
+           AND speaker = %s
+           AND message_type = 'agent_message'""",
+        (debate_id, revision_cycle, agent)
+    )
+    row = cur.fetchone()
+    cur.close()
+    return (row["cnt"] if row else 0) > 0
+
+
 # ── Loop principale ───────────────────────────────────────────────────────────
 
 def run_group_chat_loop(
@@ -397,6 +412,61 @@ def run_group_chat_loop(
         agent_name_map = {"gpt": "ChatGPT", "claude": "Claude"}
         pending_ready_agent = None
 
+        # Costruisce revision prompt una volta sola per il ciclo corrente
+        revision_priority_prompt = None
+        gpt_revision_rule = None
+        if current_cycle > 0:
+            init_history = get_debate_messages(conn, debate_id)
+            prev_cycle = current_cycle - 1
+            cycle_summary_msg = next(
+                (m for m in reversed(init_history)
+                 if m.get("message_type") == "cycle_summary"
+                 and m.get("revision_cycle") == prev_cycle),
+                None
+            )
+            correction_msg = next(
+                (m for m in reversed(init_history)
+                 if m.get("speaker") == "christian"
+                 and m.get("revision_cycle") == current_cycle),
+                None
+            )
+            cycle_summary_text = (
+                cycle_summary_msg["content"].strip() if cycle_summary_msg else "Non disponibile."
+            )
+            correction_text = (correction_msg["content"] or "").strip() if correction_msg else "Non specificata."
+            if correction_text.startswith("Non approvo. Correzione: "):
+                correction_text = correction_text[len("Non approvo. Correzione: "):]
+            revision_priority_prompt = (
+                "ISTRUZIONE PRIORITARIA — REVISIONE DOPO RIFIUTO\n\n"
+                "Christian ha rifiutato la proposta precedente.\n\n"
+                "MOTIVO DEL RIFIUTO:\n"
+                f'"{correction_text}"\n\n'
+                "La proposta precedente NON è valida.\n"
+                "Non devi difenderla.\n"
+                "Non devi ripeterla.\n"
+                "Non devi riformularla con parole diverse.\n\n"
+                "PROPOSTA PRECEDENTE RIFIUTATA:\n"
+                f"{cycle_summary_text}\n\n"
+                "Il tuo compito è produrre una proposta sostanzialmente\n"
+                "diversa che risolva il motivo del rifiuto.\n\n"
+                "Nel primo intervento del nuovo ciclo devi:\n"
+                "1. citare il motivo del rifiuto\n"
+                "2. dire cosa elimini o cambi rispetto alla proposta\n"
+                "   precedente\n"
+                "3. proporre una versione diversa e più adatta\n\n"
+                "Se riproponi la stessa soluzione, la risposta è sbagliata.\n"
+            )
+            gpt_revision_rule = (
+                "\nREGOLA SPECIFICA — ChatGPT in revisione:\n"
+                "Non partire dalla proposta precedente.\n"
+                "Parti dal feedback di Christian.\n"
+                "Prima frase obbligatoria del tuo intervento:\n"
+                "'Christian ha rifiutato perché...' oppure\n"
+                "'Correggo la proposta precedente:...'\n"
+                "Se non citi il motivo del reject, la risposta\n"
+                "è incompleta.\n"
+            )
+
         while round_index <= max_rounds:
             # Verifica che il debate non sia stato fermato esternamente
             debate_row = _query_one(
@@ -419,60 +489,17 @@ def run_group_chat_loop(
                     f"Puoi confermare con STATUS: PRONTO se sei d'accordo, "
                     f"oppure contestare con STATUS: CONTINUA se vedi problemi."
                 )
+            is_first_in_cycle = (
+                current_cycle > 0
+                and not agent_has_spoken_in_cycle(
+                    conn, debate_id, current_agent, current_cycle
+                )
+            )
             revision_note = None
-            if current_cycle > 0:
-                prev_cycle = current_cycle - 1
-                cycle_summary_msg = next(
-                    (m for m in reversed(history)
-                     if m.get("message_type") == "cycle_summary"
-                     and m.get("revision_cycle") == prev_cycle),
-                    None
-                )
-                correction_msg = next(
-                    (m for m in reversed(history)
-                     if m.get("speaker") == "christian"
-                     and m.get("revision_cycle") == current_cycle),
-                    None
-                )
-                cycle_summary_text = (
-                    cycle_summary_msg["content"].strip() if cycle_summary_msg else "Non disponibile."
-                )
-                correction_text = (correction_msg["content"] or "").strip() if correction_msg else "Non specificata."
-                if correction_text.startswith("Non approvo. Correzione: "):
-                    correction_text = correction_text[len("Non approvo. Correzione: "):]
-                revision_priority_prompt = (
-                    "ISTRUZIONE PRIORITARIA — REVISIONE DOPO RIFIUTO\n\n"
-                    "Christian ha rifiutato la proposta precedente.\n\n"
-                    "MOTIVO DEL RIFIUTO:\n"
-                    f'"{correction_text}"\n\n'
-                    "La proposta precedente NON è valida.\n"
-                    "Non devi difenderla.\n"
-                    "Non devi ripeterla.\n"
-                    "Non devi riformularla con parole diverse.\n\n"
-                    "PROPOSTA PRECEDENTE RIFIUTATA:\n"
-                    f"{cycle_summary_text}\n\n"
-                    "Il tuo compito è produrre una proposta sostanzialmente\n"
-                    "diversa che risolva il motivo del rifiuto.\n\n"
-                    "Nel primo intervento del nuovo ciclo devi:\n"
-                    "1. citare il motivo del rifiuto\n"
-                    "2. dire cosa elimini o cambi rispetto alla proposta\n"
-                    "   precedente\n"
-                    "3. proporre una versione diversa e più adatta\n\n"
-                    "Se riproponi la stessa soluzione, la risposta è sbagliata.\n"
-                )
-                if current_agent == "gpt":
-                    gpt_revision_rule = (
-                        "\nREGOLA SPECIFICA — ChatGPT in revisione:\n"
-                        "Non partire dalla proposta precedente.\n"
-                        "Parti dal feedback di Christian.\n"
-                        "Prima frase obbligatoria del tuo intervento:\n"
-                        "'Christian ha rifiutato perché...' oppure\n"
-                        "'Correggo la proposta precedente:...'\n"
-                        "Se non citi il motivo del reject, la risposta\n"
-                        "è incompleta.\n"
-                    )
-                    revision_priority_prompt += gpt_revision_rule
+            if is_first_in_cycle:
                 revision_note = revision_priority_prompt
+                if current_agent == "gpt":
+                    revision_note += gpt_revision_rule
             prompt = build_group_chat_prompt(
                 agent_display, history, global_memory, project_memory, user_profile,
                 pending_ready_note=pending_ready_note,
@@ -504,6 +531,12 @@ def run_group_chat_loop(
 
             # Parse STATUS
             clean_text, status, decision_question = parse_status(raw_response)
+
+            if is_first_in_cycle and current_agent == "gpt":
+                response_lower = clean_text.lower()
+                signals = ["rifiutato", "rifiuto", "correggo", "cambio", "elimino", "semplifico"]
+                if not any(s in response_lower for s in signals):
+                    print(f"[WARNING] GPT revision may have ignored reject_reason")
 
             # Mappa status → DB status
             status_map = {
