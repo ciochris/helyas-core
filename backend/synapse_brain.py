@@ -735,7 +735,7 @@ def group_chat(session_id):
             history_text = "\n\n".join(
                 f"[{m['speaker'].upper()}] {m['content']}"
                 for m in messages
-                if m["message_type"] not in ("final_output", "cycle_summary")
+                if m["message_type"] not in ("final_output", "cycle_summary", "revision_start")
             )
 
             summary_prompt = (
@@ -876,6 +876,25 @@ def group_chat(session_id):
                     revision_cycle=new_cycle
                 )
 
+            # Salva revision_start per il nuovo ciclo
+            save_debate_message(
+                conn=conn,
+                session_id=session_id,
+                debate_id=debate_id,
+                speaker="system",
+                target_agent=None,
+                message_type="revision_start",
+                content=f"Christian ha rifiutato la proposta precedente.\nMotivo: \"{correction}\"",
+                status=None,
+                round_index=0,
+                revision_cycle=new_cycle,
+                metadata={
+                    "reject_reason": correction,
+                    "previous_cycle": current_cycle,
+                    "new_cycle": new_cycle
+                }
+            )
+
             cur.close()
             conn.close()
 
@@ -920,7 +939,7 @@ def group_chat(session_id):
                 for m in messages
                 if (
                     m.get("revision_cycle") == current_cycle
-                    and m["message_type"] not in ("final_output", "cycle_summary", "memory_proposal")
+                    and m["message_type"] not in ("final_output", "cycle_summary", "memory_proposal", "revision_start")
                 )
             )
 
@@ -1381,6 +1400,9 @@ def dashboard():
         .gc-msg.system { border-left-color: var(--muted); opacity: 0.7; font-style: italic; font-size: 13px; }
         .gc-cycle-separator { padding: 12px 24px; text-align: center; }
         .gc-cycle-label { display: inline-block; padding: 4px 16px; font-size: 12px; color: var(--muted); border: 1px solid var(--border); border-radius: 20px; background: var(--surface); }
+        .gc-revision-start { margin: 8px 0; padding: 14px 18px; border-radius: 10px; background: var(--surface); border-left: 3px solid #e07b39; }
+        .gc-revision-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #e07b39; margin-bottom: 6px; }
+        .gc-revision-reason { font-size: 13px; color: var(--text); line-height: 1.6; white-space: pre-wrap; }
         .gc-speaker-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; margin-bottom: 6px; }
         .gc-speaker-label.christian { color: var(--text); }
         .gc-speaker-label.gpt { color: var(--gpt-color); }
@@ -1717,6 +1739,19 @@ function renderGCMessage(msg) {
     if (startEl) startEl.style.display = 'none';
 
     const div = document.createElement('div');
+
+    if (msg.message_type === 'revision_start') {
+        div.className = 'gc-revision-start';
+        const cycleNum = (msg.metadata && msg.metadata.new_cycle) ? msg.metadata.new_cycle : '';
+        const reason = (msg.content || '').replace(/\n/g, '<br>');
+        div.innerHTML = `
+            <div class="gc-revision-label">↻ CICLO DI REVISIONE${cycleNum ? ' ' + cycleNum : ''} — Feedback di Christian</div>
+            <div class="gc-revision-reason">${reason}</div>
+        `;
+        container.appendChild(div);
+        container.scrollTop = container.scrollHeight;
+        return;
+    }
 
     if (msg.message_type === 'cycle_summary') {
         div.className = 'gc-cycle-separator';
