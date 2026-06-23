@@ -910,21 +910,30 @@ def group_chat(session_id):
                 if m["message_type"] not in ("final_output", "cycle_summary", "memory_proposal")
             )
 
+            global_mem = get_global_memory()
             memory_prompt = (
-                "Produci una proposta di memoria strutturata.\n"
-                "Includi SOLO: decisioni approvate, regole operative,\n"
-                "bug risolti, bug aperti, scelte tecniche, backlog,\n"
-                "prossimi step, cambi di priorità.\n"
-                "NON includere: domande di chiarimento, spiegazioni\n"
-                "intermedie, test provvisori, log transitori,\n"
-                "messaggi senza valore futuro.\n"
-                "Formato:\n"
-                "DECISIONI:\n- ...\n"
-                "REGOLE OPERATIVE:\n- ...\n"
-                "BUG RISOLTI:\n- ...\n"
-                "BACKLOG:\n- ...\n"
-                "PROSSIMI STEP:\n- ...\n\n"
-                f"DIBATTITO:\n{history_text[:4000]}"
+                "Produci una proposta di memoria strutturata per il progetto Helyas.\n"
+                "Contesto di riferimento:\n"
+                f"{global_mem.strip() if global_mem else '(nessuna memoria precedente)'}\n\n"
+                "Dibattito da analizzare:\n"
+                f"{history_text[:4000]}\n\n"
+                "REGOLE OBBLIGATORIE:\n"
+                "- Salva solo ciò che cambia o arricchisce la memoria operativa di Helyas, "
+                "non riassumere il contenuto del dibattito.\n"
+                "- Collega le decisioni al contesto Helyas quando pertinente "
+                "(trial 30 giorni, onboarding V1A, tecnici coinvolti, moduli approvati).\n"
+                "- NON inventare collegamenti non presenti nel dibattito.\n"
+                "- La sezione BUG TECNICI RISOLTI contiene SOLO bug tecnici del sistema Helyas "
+                "(codice, UI, DB, prompt, workflow). NON include problemi operativi discussi nel contenuto.\n"
+                "- Se nel dibattito emerge un problema operativo, salvalo come 'protocollo', "
+                "'regola d'uso' o 'decisione operativa', mai come bug tecnico.\n\n"
+                "Formato obbligatorio:\n"
+                "DECISIONI OPERATIVE HELYAS:\n- ...\n\n"
+                "DECISIONI TECNICHE/PRODOTTO:\n- ...\n\n"
+                "PROTOCOLLI E REGOLE APPROVATI:\n- ...\n\n"
+                "BUG TECNICI RISOLTI:\n- (lascia vuoto se non presenti)\n\n"
+                "BACKLOG:\n- ...\n\n"
+                "PROSSIMO PASSO:\n- ..."
             )
 
             proposal_text = call_openai(memory_prompt)

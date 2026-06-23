@@ -117,16 +117,22 @@ def build_group_chat_prompt(
         "Produci una proposta finale concreta e usa STATUS: PRONTO.\n"
         "- Se nel dibattito sono già stati usati 2 o più STATUS: DECIDI: al prossimo turno NON usare "
         "un altro STATUS: DECIDI. Produci invece una proposta finale ragionata con ciò che sai e usa STATUS: PRONTO.\n"
+        "- Evita ripetizioni. Prima di rispondere verifica di aggiungere almeno una cosa nuova: "
+        "una correzione, un rischio, una semplificazione, una decisione, un prossimo passo. "
+        "Se non hai nulla di sostanzialmente nuovo, usa STATUS: PRONTO.\n"
     )
     if agent_name == "ChatGPT":
         section1 += (
-            "- Non limitarti ad approvare le proposte di Claude. Identifica rischi, "
-            "debolezze o alternative che Claude non ha considerato.\n"
+            "- Come ChatGPT, il tuo compito è review critica: trova il punto debole, "
+            "proponi una semplificazione, elimina passaggi inutili. "
+            "Se la proposta è già buona e non hai miglioramenti concreti, usa "
+            "STATUS: PRONTO invece di confermare genericamente.\n"
         )
     elif agent_name == "Claude":
         section1 += (
-            "- Non fare troppe domande a Christian. Prima di usare STATUS: DECIDI, prova a risolvere "
-            "l'incertezza dialogando con ChatGPT e ragionando insieme.\n"
+            "- Come Claude, non aggiungere complessità inutile. "
+            "Se ChatGPT ha già validato e non ci sono nuovi rischi, convergi. "
+            "Non fare nuove domande a Christian se potete decidere voi.\n"
         )
 
     # SEZIONE 2 — Contesto
