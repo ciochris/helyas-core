@@ -145,6 +145,7 @@ def init_db():
         cur.execute("ALTER TABLE group_chat_debates ADD COLUMN IF NOT EXISTS deciding_agent VARCHAR")
         cur.execute("ALTER TABLE group_chat_debates ADD COLUMN IF NOT EXISTS revision_cycle INTEGER DEFAULT 0")
         cur.execute("ALTER TABLE group_chat_messages ADD COLUMN IF NOT EXISTS revision_cycle INTEGER DEFAULT 0")
+        cur.execute("ALTER TABLE group_chat_messages ADD COLUMN IF NOT EXISTS memory_status TEXT DEFAULT NULL")
         cur.execute("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS project_id TEXT")
         cur.execute("SELECT content FROM user_profile WHERE id = 1")
         existing = cur.fetchone()
@@ -777,24 +778,8 @@ def group_chat(session_id):
                 return jsonify({"error": "Campo 'debate_id' obbligatorio"}), 400
 
             update_debate_status(conn, debate_id, status="ready")
-
-            messages = get_debate_messages(conn, debate_id)
-            # Includi tutti i messaggi non-system + i final_output di system (decision log)
-            full_content = " ".join(
-                m["content"] for m in messages
-                if m["speaker"] != "system" or m["message_type"] == "final_output"
-            )
-
             cur.close()
             conn.close()
-
-            # Aggiorna memoria globale in background
-            if full_content:
-                threading.Thread(
-                    target=update_global_memory_auto,
-                    args=(full_content[:1000], "Group Chat debate approvato"),
-                    daemon=True
-                ).start()
 
             return jsonify({
                 "debate_id": debate_id,
@@ -906,6 +891,107 @@ def group_chat(session_id):
                 "next_agent": next_agent,
                 "revision_cycle": new_cycle
             })
+
+        # ── PROPOSE MEMORY ────────────────────────────────────────────────────
+        elif action == "propose_memory":
+            debate_id = data.get("debate_id", "").strip()
+            if not debate_id:
+                return jsonify({"error": "Campo 'debate_id' obbligatorio"}), 400
+
+            messages = get_debate_messages(conn, debate_id)
+            if not messages:
+                cur.close()
+                conn.close()
+                return jsonify({"error": "Nessun messaggio nel debate"}), 404
+
+            history_text = "\n\n".join(
+                f"[{m['speaker'].upper()}] {m['content']}"
+                for m in messages
+                if m["message_type"] not in ("final_output", "cycle_summary", "memory_proposal")
+            )
+
+            memory_prompt = (
+                "Produci una proposta di memoria strutturata.\n"
+                "Includi SOLO: decisioni approvate, regole operative,\n"
+                "bug risolti, bug aperti, scelte tecniche, backlog,\n"
+                "prossimi step, cambi di priorità.\n"
+                "NON includere: domande di chiarimento, spiegazioni\n"
+                "intermedie, test provvisori, log transitori,\n"
+                "messaggi senza valore futuro.\n"
+                "Formato:\n"
+                "DECISIONI:\n- ...\n"
+                "REGOLE OPERATIVE:\n- ...\n"
+                "BUG RISOLTI:\n- ...\n"
+                "BACKLOG:\n- ...\n"
+                "PROSSIMI STEP:\n- ...\n\n"
+                f"DIBATTITO:\n{history_text[:4000]}"
+            )
+
+            proposal_text = call_openai(memory_prompt)
+            if not proposal_text or "ERROR" in proposal_text:
+                cur.close()
+                conn.close()
+                return jsonify({"error": "Generazione proposta fallita"}), 500
+
+            cur.execute(
+                """INSERT INTO group_chat_messages
+                   (session_id, debate_id, speaker, target_agent, message_type,
+                    content, status, round_index, memory_status)
+                   VALUES (%s, %s, 'system', NULL, 'memory_proposal',
+                           %s, NULL, 0, 'proposed')
+                   RETURNING id""",
+                (session_id, debate_id, proposal_text)
+            )
+            proposal_row = cur.fetchone()
+            conn.commit()
+            cur.close()
+            conn.close()
+
+            return jsonify({
+                "proposal_id": proposal_row["id"],
+                "proposal_text": proposal_text
+            })
+
+        # ── SAVE MEMORY PROPOSAL ──────────────────────────────────────────────
+        elif action == "save_memory_proposal":
+            debate_id = data.get("debate_id", "").strip()
+            proposal_message_id = data.get("proposal_message_id")
+            content = data.get("content", "").strip()
+            if not debate_id or proposal_message_id is None or not content:
+                return jsonify({"error": "Campi 'debate_id', 'proposal_message_id', 'content' obbligatori"}), 400
+
+            current_mem = get_global_memory()
+            data_ora = datetime.now().strftime("%Y-%m-%d %H:%M")
+            new_mem = (current_mem or "") + f"\n\n--- MEMORIA DA DEBATE {data_ora} ---\n" + content.strip()
+            cur.execute("""
+                INSERT INTO global_memory (id, content, updated_at)
+                VALUES (1, %s, NOW())
+                ON CONFLICT (id) DO UPDATE SET content = %s, updated_at = NOW()
+            """, (new_mem, new_mem))
+            cur.execute(
+                "UPDATE group_chat_messages SET memory_status = 'saved' WHERE id = %s",
+                (proposal_message_id,)
+            )
+            conn.commit()
+            cur.close()
+            conn.close()
+            return jsonify({"status": "saved"})
+
+        # ── DISCARD MEMORY PROPOSAL ───────────────────────────────────────────
+        elif action == "discard_memory_proposal":
+            debate_id = data.get("debate_id", "").strip()
+            proposal_message_id = data.get("proposal_message_id")
+            if not debate_id or proposal_message_id is None:
+                return jsonify({"error": "Campi 'debate_id' e 'proposal_message_id' obbligatori"}), 400
+
+            cur.execute(
+                "UPDATE group_chat_messages SET memory_status = 'discarded' WHERE id = %s",
+                (proposal_message_id,)
+            )
+            conn.commit()
+            cur.close()
+            conn.close()
+            return jsonify({"status": "discarded"})
 
         else:
             cur.close()
@@ -1276,6 +1362,12 @@ def dashboard():
         .gc-decision-input { display: flex; gap: 8px; margin-top: 10px; }
         .gc-decision-input textarea { flex: 1; padding: 8px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-family: var(--font); font-size: 13px; resize: none; outline: none; }
         .gc-decision-input textarea:focus { border-color: var(--accent); }
+        .gc-memory-box { display:none; background: var(--surface2); border: 1px solid var(--accent); border-radius: 10px; padding: 14px 18px; margin: 0 24px 12px; }
+        .gc-memory-title { color: var(--accent); font-weight: 700; margin-bottom: 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
+        .gc-memory-content { white-space: pre-wrap; font-family: var(--mono); font-size: 12px; color: var(--text); max-height: 280px; overflow-y: auto; margin-bottom: 12px; line-height: 1.6; }
+        .gc-memory-actions { display: flex; gap: 8px; }
+        .gc-memory-suggestion { display:none; gap: 8px; align-items: center; padding: 10px 24px; border-top: 1px solid var(--border); background: var(--surface); }
+        .gc-memory-suggestion span { font-size: 13px; color: var(--muted); }
     </style>
 </head>
 <body>
@@ -1338,6 +1430,14 @@ def dashboard():
                 <button class="gc-btn primary" onclick="continueWithDecision()">Continua</button>
             </div>
         </div>
+        <div class="gc-memory-box" id="gcMemoryBox">
+            <div class="gc-memory-title">Proposta di memoria</div>
+            <div class="gc-memory-content" id="gcMemoryContent"></div>
+            <div class="gc-memory-actions">
+                <button class="gc-btn primary" onclick="saveMemoryProposal()">Salva in memoria</button>
+                <button class="gc-btn danger" onclick="discardMemoryProposal()">Scarta</button>
+            </div>
+        </div>
         <div class="gc-status-bar" id="gcStatusBar">
             <div class="dots"><span></span><span></span><span></span></div>
             <span id="gcStatusText">In elaborazione...</span>
@@ -1349,6 +1449,12 @@ def dashboard():
             <button class="gc-btn" onclick="summarizeDebate()">Sintesi</button>
             <button class="gc-btn primary" onclick="approveDebate()">Approvo</button>
             <button class="gc-btn" onclick="rejectDebate()">Non approvo</button>
+            <button class="gc-btn" onclick="proposeMemory()">Proponi memoria</button>
+        </div>
+        <div class="gc-memory-suggestion" id="gcMemorySuggestion">
+            <span>Vuoi proporre una memoria da salvare?</span>
+            <button class="gc-btn" onclick="proposeMemory()">Proponi memoria</button>
+            <button class="gc-btn" onclick="skipMemory()">Salta</button>
         </div>
         <div class="input-area" id="gcInputArea" style="display:none">
             <div class="input-wrapper">
@@ -1520,6 +1626,8 @@ let currentDebateId = null;
 let gcPollingInterval = null;
 let lastMessageId = 0;
 let currentGCMode = false;
+let currentProposalId = null;
+let awaitingMemoryAfterApprove = false;
 
 function setMode(mode) {
     currentGCMode = (mode === 'groupchat');
@@ -1598,8 +1706,13 @@ function resetGCState() {
     stopPolling();
     currentDebateId = null;
     lastMessageId = 0;
+    awaitingMemoryAfterApprove = false;
+    currentProposalId = null;
     document.getElementById('gcMessages').innerHTML = '';
     document.getElementById('gcDecisionBox').style.display = 'none';
+    document.getElementById('gcMemoryBox').style.display = 'none';
+    document.getElementById('gcMemorySuggestion').style.display = 'none';
+    document.getElementById('gcMemoryContent').textContent = '';
     const gcDecisionAnswer = document.getElementById('gcDecisionAnswer');
     if (gcDecisionAnswer) gcDecisionAnswer.value = '';
     document.getElementById('gcDecisionQuestion').textContent = '';
@@ -1754,6 +1867,96 @@ async function approveDebate() {
     } catch(e) { console.error(e); }
     renderGCMessage({ speaker: 'system', content: 'Output approvato da Christian.', round_index: 0 });
     document.getElementById('gcControls').classList.remove('visible');
+    awaitingMemoryAfterApprove = true;
+    document.getElementById('gcMemorySuggestion').style.display = 'flex';
+    updateStopVisibility();
+}
+
+async function proposeMemory() {
+    if (!currentDebateId) return;
+    document.getElementById('gcStatusBar').classList.add('visible');
+    document.getElementById('gcStatusText').textContent = 'Generazione proposta memoria...';
+    document.getElementById('gcControls').classList.remove('visible');
+    document.getElementById('gcMemorySuggestion').style.display = 'none';
+    try {
+        const res = await fetch(`/sessions/${currentSessionId}/group-chat`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ action: 'propose_memory', debate_id: currentDebateId })
+        });
+        const data = await res.json();
+        document.getElementById('gcStatusBar').classList.remove('visible');
+        if (data.error) {
+            alert('Errore: ' + data.error);
+            if (awaitingMemoryAfterApprove) {
+                document.getElementById('gcMemorySuggestion').style.display = 'flex';
+            } else {
+                document.getElementById('gcControls').classList.add('visible');
+            }
+            return;
+        }
+        currentProposalId = data.proposal_id;
+        document.getElementById('gcMemoryContent').textContent = data.proposal_text;
+        document.getElementById('gcMemoryBox').style.display = 'block';
+    } catch(e) {
+        document.getElementById('gcStatusBar').classList.remove('visible');
+        document.getElementById('gcControls').classList.add('visible');
+    }
+}
+
+function _afterMemoryAction() {
+    document.getElementById('gcMemoryBox').style.display = 'none';
+    document.getElementById('gcMemoryContent').textContent = '';
+    currentProposalId = null;
+    if (awaitingMemoryAfterApprove) {
+        awaitingMemoryAfterApprove = false;
+        document.getElementById('gcMemorySuggestion').style.display = 'none';
+        currentDebateId = null;
+        updateStopVisibility();
+        document.getElementById('gcInputArea').style.display = 'flex';
+    } else {
+        document.getElementById('gcControls').classList.add('visible');
+    }
+}
+
+async function saveMemoryProposal() {
+    if (!currentDebateId || currentProposalId === null) return;
+    const content = document.getElementById('gcMemoryContent').textContent;
+    try {
+        await fetch(`/sessions/${currentSessionId}/group-chat`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                action: 'save_memory_proposal',
+                debate_id: currentDebateId,
+                proposal_message_id: currentProposalId,
+                content
+            })
+        });
+        renderGCMessage({ speaker: 'system', content: 'Memoria salvata.', round_index: 0 });
+    } catch(e) { console.error(e); }
+    _afterMemoryAction();
+}
+
+async function discardMemoryProposal() {
+    if (!currentDebateId || currentProposalId === null) return;
+    try {
+        await fetch(`/sessions/${currentSessionId}/group-chat`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                action: 'discard_memory_proposal',
+                debate_id: currentDebateId,
+                proposal_message_id: currentProposalId
+            })
+        });
+    } catch(e) { console.error(e); }
+    _afterMemoryAction();
+}
+
+function skipMemory() {
+    document.getElementById('gcMemorySuggestion').style.display = 'none';
+    awaitingMemoryAfterApprove = false;
     currentDebateId = null;
     updateStopVisibility();
     document.getElementById('gcInputArea').style.display = 'flex';
