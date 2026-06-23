@@ -440,28 +440,39 @@ def run_group_chat_loop(
                 correction_text = (correction_msg["content"] or "").strip() if correction_msg else "Non specificata."
                 if correction_text.startswith("Non approvo. Correzione: "):
                     correction_text = correction_text[len("Non approvo. Correzione: "):]
-                other_display = agent_name_map.get(other_agent, other_agent)
-                revision_note = (
-                    "ISTRUZIONE PRIORITARIA ASSOLUTA — CICLO DI REVISIONE\n\n"
+                revision_priority_prompt = (
+                    "ISTRUZIONE PRIORITARIA — REVISIONE DOPO RIFIUTO\n\n"
                     "Christian ha rifiutato la proposta precedente.\n\n"
-                    f"MOTIVO DEL RIFIUTO:\n\"{correction_text}\"\n\n"
-                    "La proposta precedente NON è approvata.\n"
-                    "Non devi difenderla, ripeterla o riformularla con parole diverse.\n\n"
-                    "Devi produrre una proposta sostanzialmente diversa che risolva il motivo del rifiuto.\n\n"
-                    "Prima di rispondere, identifica cosa va cambiato.\n"
-                    "Nella risposta devi rendere evidente almeno una modifica concreta rispetto al ciclo precedente.\n\n"
-                    "Se il motivo è \"voglio una soluzione più semplice\":\n"
-                    "- riduci il numero di passaggi\n"
-                    "- riduci il carico operativo\n"
-                    "- elimina elementi non indispensabili\n"
-                    "- proponi una versione più breve e diretta\n\n"
-                    "Se ripeti la proposta precedente, la risposta è sbagliata.\n\n"
-                    f"PROPOSTA PRECEDENTE RIFIUTATA — NON RIPETERE:\n{cycle_summary_text}\n\n"
-                    "NUOVO COMPITO:\n"
-                    "Rielabora la proposta. Nel primo messaggio del ciclo devi obbligatoriamente iniziare "
-                    "citando il motivo del reject, ad esempio:\n"
-                    f"\"{other_display}, Christian ha rifiutato perché [motivo]. Quindi...\""
+                    "MOTIVO DEL RIFIUTO:\n"
+                    f'"{correction_text}"\n\n'
+                    "La proposta precedente NON è valida.\n"
+                    "Non devi difenderla.\n"
+                    "Non devi ripeterla.\n"
+                    "Non devi riformularla con parole diverse.\n\n"
+                    "PROPOSTA PRECEDENTE RIFIUTATA:\n"
+                    f"{cycle_summary_text}\n\n"
+                    "Il tuo compito è produrre una proposta sostanzialmente\n"
+                    "diversa che risolva il motivo del rifiuto.\n\n"
+                    "Nel primo intervento del nuovo ciclo devi:\n"
+                    "1. citare il motivo del rifiuto\n"
+                    "2. dire cosa elimini o cambi rispetto alla proposta\n"
+                    "   precedente\n"
+                    "3. proporre una versione diversa e più adatta\n\n"
+                    "Se riproponi la stessa soluzione, la risposta è sbagliata.\n"
                 )
+                if current_agent == "gpt":
+                    gpt_revision_rule = (
+                        "\nREGOLA SPECIFICA — ChatGPT in revisione:\n"
+                        "Non partire dalla proposta precedente.\n"
+                        "Parti dal feedback di Christian.\n"
+                        "Prima frase obbligatoria del tuo intervento:\n"
+                        "'Christian ha rifiutato perché...' oppure\n"
+                        "'Correggo la proposta precedente:...'\n"
+                        "Se non citi il motivo del reject, la risposta\n"
+                        "è incompleta.\n"
+                    )
+                    revision_priority_prompt += gpt_revision_rule
+                revision_note = revision_priority_prompt
             prompt = build_group_chat_prompt(
                 agent_display, history, global_memory, project_memory, user_profile,
                 pending_ready_note=pending_ready_note,

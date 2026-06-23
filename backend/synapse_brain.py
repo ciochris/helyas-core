@@ -898,6 +898,17 @@ def group_chat(session_id):
             if not debate_id:
                 return jsonify({"error": "Campo 'debate_id' obbligatorio"}), 400
 
+            cur.execute(
+                "SELECT revision_cycle FROM group_chat_debates WHERE debate_id = %s",
+                (debate_id,)
+            )
+            debate_row = cur.fetchone()
+            if not debate_row:
+                cur.close()
+                conn.close()
+                return jsonify({"error": "Debate non trovato"}), 404
+            current_cycle = debate_row["revision_cycle"] or 0
+
             messages = get_debate_messages(conn, debate_id)
             if not messages:
                 cur.close()
@@ -907,7 +918,10 @@ def group_chat(session_id):
             history_text = "\n\n".join(
                 f"[{m['speaker'].upper()}] {m['content']}"
                 for m in messages
-                if m["message_type"] not in ("final_output", "cycle_summary", "memory_proposal")
+                if (
+                    m.get("revision_cycle") == current_cycle
+                    and m["message_type"] not in ("final_output", "cycle_summary", "memory_proposal")
+                )
             )
 
             global_mem = get_global_memory()
