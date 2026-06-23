@@ -412,9 +412,9 @@ def run_group_chat_loop(
         agent_name_map = {"gpt": "ChatGPT", "claude": "Claude"}
         pending_ready_agent = None
 
-        # Costruisce revision prompt una volta sola per il ciclo corrente
+        # Costruisce revision prompt e history pulita una volta sola per il ciclo corrente
         revision_priority_prompt = None
-        gpt_revision_rule = None
+        revision_clean_history = []
         if current_cycle > 0:
             init_history = get_debate_messages(conn, debate_id)
             prev_cycle = current_cycle - 1
@@ -437,35 +437,39 @@ def run_group_chat_loop(
             if correction_text.startswith("Non approvo. Correzione: "):
                 correction_text = correction_text[len("Non approvo. Correzione: "):]
             revision_priority_prompt = (
-                "ISTRUZIONE PRIORITARIA — REVISIONE DOPO RIFIUTO\n\n"
-                "Christian ha rifiutato la proposta precedente.\n\n"
+                "REVISIONE DOPO RIFIUTO — CONTESTO PULITO\n\n"
+                "Stai iniziando un nuovo ciclo dopo un rifiuto.\n\n"
+                "La proposta precedente è stata rifiutata e NON\n"
+                "è più una soluzione candidata. Usala solo per\n"
+                "capire cosa evitare.\n\n"
                 "MOTIVO DEL RIFIUTO:\n"
                 f'"{correction_text}"\n\n'
-                "La proposta precedente NON è valida.\n"
-                "Non devi difenderla.\n"
-                "Non devi ripeterla.\n"
-                "Non devi riformularla con parole diverse.\n\n"
-                "PROPOSTA PRECEDENTE RIFIUTATA:\n"
-                f"{cycle_summary_text}\n\n"
-                "Il tuo compito è produrre una proposta sostanzialmente\n"
-                "diversa che risolva il motivo del rifiuto.\n\n"
-                "Nel primo intervento del nuovo ciclo devi:\n"
-                "1. citare il motivo del rifiuto\n"
-                "2. dire cosa elimini o cambi rispetto alla proposta\n"
-                "   precedente\n"
-                "3. proporre una versione diversa e più adatta\n\n"
-                "Se riproponi la stessa soluzione, la risposta è sbagliata.\n"
+                "PROPOSTA RIFIUTATA DA EVITARE:\n"
+                f'"{cycle_summary_text}"\n\n'
+                "Compito: produci una proposta diversa.\n\n"
+                "La tua risposta DEVE avere questa struttura:\n"
+                "1. 'Christian ha rifiutato perché...'\n"
+                "2. 'Quindi elimino/cambio...'\n"
+                "3. 'Nuova proposta: ...'\n\n"
+                "Divieto assoluto:\n"
+                "- non usare la stessa struttura della proposta rifiutata\n"
+                "- non riproporre gli stessi elementi principali\n"
+                "- tutto ciò che compare nella proposta rifiutata\n"
+                "  è NON approvato; puoi recuperarlo solo se lo\n"
+                "  modifichi sostanzialmente e spieghi perché\n"
+                "  ora risolve il motivo del reject\n"
+                "- se non riesci a proporre qualcosa di diverso,\n"
+                "  usa STATUS: DECIDI\n"
             )
-            gpt_revision_rule = (
-                "\nREGOLA SPECIFICA — ChatGPT in revisione:\n"
-                "Non partire dalla proposta precedente.\n"
-                "Parti dal feedback di Christian.\n"
-                "Prima frase obbligatoria del tuo intervento:\n"
-                "'Christian ha rifiutato perché...' oppure\n"
-                "'Correggo la proposta precedente:...'\n"
-                "Se non citi il motivo del reject, la risposta\n"
-                "è incompleta.\n"
-            )
+            revision_clean_history = [
+                m for m in init_history
+                if (
+                    (m.get("speaker") == "christian"
+                     and m.get("revision_cycle") == 0
+                     and m.get("round_index") == 0)
+                    or m.get("revision_cycle") == current_cycle
+                )
+            ]
 
         while round_index <= max_rounds:
             # Verifica che il debate non sia stato fermato esternamente
@@ -498,10 +502,22 @@ def run_group_chat_loop(
             revision_note = None
             if is_first_in_cycle:
                 revision_note = revision_priority_prompt
-                if current_agent == "gpt":
-                    revision_note += gpt_revision_rule
+            if current_cycle == 0:
+                history_for_prompt = history
+            elif is_first_in_cycle:
+                history_for_prompt = revision_clean_history
+            else:
+                history_for_prompt = [
+                    m for m in history
+                    if m.get("revision_cycle") == current_cycle
+                    or (
+                        m.get("revision_cycle") == 0
+                        and m.get("speaker") == "christian"
+                        and m.get("round_index") == 0
+                    )
+                ]
             prompt = build_group_chat_prompt(
-                agent_display, history, global_memory, project_memory, user_profile,
+                agent_display, history_for_prompt, global_memory, project_memory, user_profile,
                 pending_ready_note=pending_ready_note,
                 revision_note=revision_note
             )
