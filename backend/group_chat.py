@@ -435,10 +435,6 @@ def run_group_chat_loop(
                 revision_note=revision_note
             )
 
-            print(f"[GROUP CHAT PROMPT] round={round_index} cycle={current_cycle}")
-            print(prompt)
-            print("--- END PROMPT ---")
-
             # Chiama API
             t_start = time.time()
             if current_agent == "gpt":
