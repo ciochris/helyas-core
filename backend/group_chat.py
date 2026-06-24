@@ -338,7 +338,17 @@ def get_debate_messages(conn, debate_id: str, after_id: int = None) -> list:
     return rows
 
 
+def normalize_agent_name(agent: str) -> str:
+    a = (agent or "").strip().lower()
+    if a in ["gpt", "chatgpt", "openai"]:
+        return "gpt"
+    if a in ["claude", "anthropic"]:
+        return "claude"
+    return a
+
+
 def agent_has_spoken_in_cycle(conn, debate_id: str, agent: str, revision_cycle: int) -> bool:
+    normalized = normalize_agent_name(agent)
     cur = conn.cursor()
     cur.execute(
         """SELECT COUNT(*) as cnt FROM group_chat_messages
@@ -346,7 +356,7 @@ def agent_has_spoken_in_cycle(conn, debate_id: str, agent: str, revision_cycle: 
            AND revision_cycle = %s
            AND speaker = %s
            AND message_type = 'agent_message'""",
-        (debate_id, revision_cycle, agent)
+        (debate_id, revision_cycle, normalized)
     )
     row = cur.fetchone()
     cur.close()
@@ -493,12 +503,37 @@ def run_group_chat_loop(
                     f"Puoi confermare con STATUS: PRONTO se sei d'accordo, "
                     f"oppure contestare con STATUS: CONTINUA se vedi problemi."
                 )
-            is_first_in_cycle = (
-                current_cycle > 0
-                and not agent_has_spoken_in_cycle(
-                    conn, debate_id, current_agent, current_cycle
-                )
+            # STEP 3 — diagnostica e is_first normalizzato
+            normalized_agent = normalize_agent_name(current_agent)
+            agent_has_spoken = agent_has_spoken_in_cycle(
+                conn, debate_id, normalized_agent, current_cycle
             )
+            is_first_for_agent = (current_cycle > 0 and not agent_has_spoken)
+            # mantenuto per compatibilità con i blocchi history/prompt che usano is_first_in_cycle
+            is_first_in_cycle = is_first_for_agent
+            print(
+                f"[REVISION_DEBUG] cycle={current_cycle} "
+                f"agent={current_agent} normalized={normalized_agent} "
+                f"is_first={is_first_for_agent} "
+                f"correction={bool(correction_text)} "
+                f"summary={bool(cycle_summary_text)}"
+            )
+
+            # STEP 5 — aggiorna correction_text dal DB se disponibile
+            if current_cycle > 0:
+                correction_msg_live = next(
+                    (m for m in history
+                     if m.get("speaker") == "christian"
+                     and m.get("revision_cycle") == current_cycle
+                     and m.get("message_type") == "user_input"),
+                    None
+                )
+                if correction_msg_live:
+                    fetched_correction = (correction_msg_live["content"] or "").strip()
+                    if fetched_correction.startswith("Non approvo. Correzione: "):
+                        fetched_correction = fetched_correction[len("Non approvo. Correzione: "):]
+                    correction_text = fetched_correction or correction_text
+
             revision_note = None
             if is_first_in_cycle:
                 revision_note = revision_priority_prompt
@@ -527,7 +562,9 @@ def run_group_chat_loop(
             if current_agent == "gpt":
                 import openai as openai_lib
                 gpt_client = openai_lib.OpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
-                gpt_model = "gpt-4o" if (is_first_in_cycle and current_cycle > 0) else os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+                gpt_model = "gpt-4o" if (normalized_agent == "gpt" and is_first_for_agent) else os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+                if normalized_agent == "gpt" and is_first_for_agent:
+                    print(f"[MODEL_SWITCH] Using gpt-4o for first GPT turn after reject")
                 response = gpt_client.chat.completions.create(
                     model=gpt_model,
                     messages=[{"role": "user", "content": prompt}],
@@ -536,7 +573,7 @@ def run_group_chat_loop(
                 )
                 raw_response = response.choices[0].message.content.strip()
 
-                if is_first_in_cycle and current_cycle > 0:
+                if normalized_agent == "gpt" and is_first_for_agent:
                     response_lower = raw_response.lower()
                     revision_signals = ["rifiutato", "rifiuto", "correggo", "elimino", "cambio", "semplifico"]
                     correction_fragment = (correction_text or "").lower()[:60]
