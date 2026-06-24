@@ -526,14 +526,53 @@ def run_group_chat_loop(
             t_start = time.time()
             if current_agent == "gpt":
                 import openai as openai_lib
-                client = openai_lib.OpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
-                response = client.chat.completions.create(
-                    model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+                gpt_client = openai_lib.OpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
+                gpt_model = "gpt-4o" if (is_first_in_cycle and current_cycle > 0) else os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+                response = gpt_client.chat.completions.create(
+                    model=gpt_model,
                     messages=[{"role": "user", "content": prompt}],
                     max_tokens=1200,
                     temperature=0.7
                 )
                 raw_response = response.choices[0].message.content.strip()
+
+                if is_first_in_cycle and current_cycle > 0:
+                    response_lower = raw_response.lower()
+                    revision_signals = ["rifiutato", "rifiuto", "correggo", "elimino", "cambio", "semplifico"]
+                    correction_fragment = (correction_text or "").lower()[:60]
+                    has_signal = (
+                        any(s in response_lower for s in revision_signals)
+                        or (correction_fragment and correction_fragment in response_lower)
+                    )
+                    if not has_signal:
+                        print(f"[WARNING] GPT revision ignored reject_reason — retrying with gpt-4o")
+                        retry_prompt = (
+                            "La tua risposta precedente non ha considerato"
+                            " il rifiuto di Christian. Rispondi di nuovo.\n\n"
+                            f"MOTIVO DEL RIFIUTO:\n'{correction_text}'\n\n"
+                            f"PROPOSTA RIFIUTATA:\n'{cycle_summary_text}'\n\n"
+                            "Rispondi OBBLIGATORIAMENTE con questa struttura:\n"
+                            "1. Christian ha rifiutato perché...\n"
+                            "2. Elimino/cambio...\n"
+                            "3. Nuova proposta...\n\n"
+                            "Non ripetere la proposta rifiutata."
+                        )
+                        retry_response = gpt_client.chat.completions.create(
+                            model="gpt-4o",
+                            messages=[{"role": "user", "content": retry_prompt}],
+                            max_tokens=1200,
+                            temperature=0.7
+                        )
+                        retry_text = retry_response.choices[0].message.content.strip()
+                        retry_lower = retry_text.lower()
+                        retry_ok = (
+                            any(s in retry_lower for s in revision_signals)
+                            or (correction_fragment and correction_fragment in retry_lower)
+                        )
+                        if retry_ok:
+                            raw_response = retry_text
+                        else:
+                            print(f"[WARNING] GPT retry also ignored reject_reason — using original response")
             else:
                 import anthropic as anthropic_lib
                 client = anthropic_lib.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
@@ -547,12 +586,6 @@ def run_group_chat_loop(
 
             # Parse STATUS
             clean_text, status, decision_question = parse_status(raw_response)
-
-            if is_first_in_cycle and current_agent == "gpt":
-                response_lower = clean_text.lower()
-                signals = ["rifiutato", "rifiuto", "correggo", "cambio", "elimino", "semplifico"]
-                if not any(s in response_lower for s in signals):
-                    print(f"[WARNING] GPT revision may have ignored reject_reason")
 
             # Mappa status → DB status
             status_map = {
