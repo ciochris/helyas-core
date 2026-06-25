@@ -427,6 +427,7 @@ def run_group_chat_loop(
         revision_clean_history = []
         correction_text = ""
         cycle_summary_text = ""
+        gpt_revision_rule = None
         if current_cycle > 0:
             init_history = get_debate_messages(conn, debate_id)
             prev_cycle = current_cycle - 1
@@ -473,6 +474,44 @@ def run_group_chat_loop(
                 "- se non riesci a proporre qualcosa di diverso,\n"
                 "  usa STATUS: DECIDI\n"
             )
+
+            # Verifica se Christian ha chiesto semplicità
+            simplicity_keywords = [
+                "semplice", "più semplice", "troppo complesso",
+                "meno complicato", "una cosa sola", "snello", "più facile"
+            ]
+            is_simplicity_request = any(kw in correction_text.lower() for kw in simplicity_keywords)
+            if is_simplicity_request:
+                simplicity_note = (
+                    "\nISTRUZIONE SPECIALE — RICHIESTA DI SEMPLICITÀ\n\n"
+                    "Christian ha chiesto una soluzione più semplice.\n\n"
+                    "Non proporre un nuovo sistema.\n"
+                    "Non proporre più componenti.\n"
+                    "Non proporre protocolli, routine, canali multipli "
+                    "o flussi paralleli.\n\n"
+                    "Formato obbligatorio:\n"
+                    "1. Christian ha rifiutato perché: [una riga]\n"
+                    "2. Elimino: [cosa togli dalla proposta precedente]\n"
+                    "3. Nuova proposta minima: [UNA sola regola]\n\n"
+                    "Limiti:\n"
+                    "- massimo 1 regola principale\n"
+                    "- massimo 1 esempio\n"
+                    "- niente fase 1/fase 2/fase 3\n"
+                    "- niente sistemi multi-componente\n"
+                    "- se ti vengono in mente più soluzioni, "
+                    "scegli solo quella essenziale\n"
+                )
+                revision_priority_prompt += simplicity_note
+                gpt_revision_rule = (
+                    "\nREGOLA SPECIFICA — ChatGPT:\n"
+                    "Se la tua proposta contiene più di una regola "
+                    "principale, è sbagliata.\n"
+                    "Se stai proponendo un sistema alternativo invece "
+                    "di tagliare, è sbagliata.\n"
+                    "Il tuo compito in questo turno è ridurre, "
+                    "non progettare.\n"
+                )
+
             revision_clean_history = [
                 m for m in init_history
                 if (
@@ -539,6 +578,8 @@ def run_group_chat_loop(
             revision_note = None
             if is_first_in_cycle:
                 revision_note = revision_priority_prompt
+                if current_agent == "gpt" and gpt_revision_rule:
+                    revision_note = (revision_note or "") + gpt_revision_rule
             if current_cycle == 0:
                 history_for_prompt = history
             elif is_first_in_cycle:
