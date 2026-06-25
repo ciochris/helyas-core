@@ -645,7 +645,16 @@ def run_group_chat_loop(
                 content=clean_text,
                 status=db_status,
                 round_index=round_index,
-                metadata={"execution_time": exec_time},
+                metadata={
+                    "execution_time": exec_time,
+                    "model_used": gpt_model if current_agent == "gpt" else None,
+                    "is_first_for_agent": is_first_for_agent,
+                    "model_switch_reason": (
+                        "first_gpt_turn_after_reject"
+                        if (current_agent == "gpt" and is_first_for_agent and current_cycle > 0)
+                        else None
+                    ),
+                },
                 revision_cycle=current_cycle
             )
 
