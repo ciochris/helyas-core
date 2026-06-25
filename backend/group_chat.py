@@ -425,6 +425,8 @@ def run_group_chat_loop(
         # Costruisce revision prompt e history pulita una volta sola per il ciclo corrente
         revision_priority_prompt = None
         revision_clean_history = []
+        correction_text = ""
+        cycle_summary_text = ""
         if current_cycle > 0:
             init_history = get_debate_messages(conn, debate_id)
             prev_cycle = current_cycle - 1
