@@ -605,7 +605,7 @@ def run_group_chat_loop(
             if current_agent == "gpt":
                 import openai as openai_lib
                 gpt_client = openai_lib.OpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
-                gpt_model = "gpt-4o" if (normalized_agent == "gpt" and is_first_for_agent) else os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+                gpt_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
                 if normalized_agent == "gpt" and is_first_for_agent:
                     print(f"[MODEL_SWITCH] Using gpt-4o for first GPT turn after reject")
                 response = gpt_client.chat.completions.create(
